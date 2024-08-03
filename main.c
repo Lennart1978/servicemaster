@@ -29,7 +29,7 @@ char *introduction = "Press Space to switch between system and user systemd unit
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: 1.0";                   
+                     "https://github.com/lennart1978/servicemaster\nVersion: 1.1";                   
 
 
 char *intro_title = "A quick introduction to ServiceMaster:";
