@@ -97,6 +97,12 @@ typedef struct {
 
 Total total_types;
 
+/**
+ * Centers the given text by adding spaces to the beginning and end of each line to make the text centered.
+ *
+ * @param text The text to center.
+ * @return A newly allocated string containing the centered text.
+ */
 char* center(const char *text) {
     char *result = NULL;
     char *line, *saveptr;
@@ -152,6 +158,15 @@ char* center(const char *text) {
     return result;
 }
 
+/**
+ * Displays a status window with the provided status message and title.
+ *
+ * This function creates a centered window on the screen with the given status
+ * message and title. The window is displayed until the user presses a key.
+ *
+ * @param status The status message to display in the window.
+ * @param title The title to display at the top of the window.
+ */
 void show_status_window(const char *status, const char *title) {
     char status_cpy[strlen(status) + 1];
     strcpy(status_cpy, status);
@@ -249,6 +264,17 @@ void show_status_window(const char *status, const char *title) {
    
 }
 
+/**
+ * Reload the systemd daemon.
+ *
+ * This function connects to the D-Bus system or user bus, depending on the value of the `is_system` global variable,
+ * and calls the `Reload` method on the `org.freedesktop.systemd1.Manager` interface of the `org.freedesktop.systemd1` service at the `/org/freedesktop/systemd1` object path.
+ *
+ * If the operation is successful, the function returns `true`.
+ * If there is an error, the function displays an error message using the `show_status_window` function and returns `false`.
+ *
+ * @return `true` if the daemon was reloaded successfully, `false` otherwise.
+ */
 bool daemon_reload() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus *bus = NULL;
@@ -277,6 +303,21 @@ bool daemon_reload() {
     return true;
 }
 
+/**
+ * Perform a systemd operation on a given unit.
+ *
+ * This function connects to the D-Bus system or user bus, depending on the value of the `is_system` global variable,
+ * and calls the appropriate method on the `org.freedesktop.systemd1.Manager` interface of the `org.freedesktop.systemd1` service at the `/org/freedesktop/systemd1` object path.
+ *
+ * The supported operations are: START, STOP, RESTART, ENABLE, DISABLE, MASK, UNMASK, and RELOAD.
+ *
+ * If the operation is successful, the function returns `true`.
+ * If there is an error, the function displays an error message using the `show_status_window` function and returns `false`.
+ *
+ * @param unit The name of the systemd unit to perform the operation on.
+ * @param operation The type of operation to perform on the unit.
+ * @return `true` if the operation was successful, `false` otherwise.
+ */
 bool start_operation(const char* unit, enum Operations operation) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL, *m = NULL;
@@ -417,11 +458,18 @@ bool is_root() {
     return false;
 }
 
+/**
+ * Retrieves the status information for the specified system or user service unit.
+ *
+ * @param unit The name of the service unit to retrieve status information for.
+ * @return A dynamically allocated string containing the status information, or NULL if an error occurred.
+ *         The caller is responsible for freeing the returned string.
+ */
 char* get_status_info(const char* unit) {
     char command[256];
     char* output = malloc(8000);
     if (output == NULL) {
-        fprintf(stderr, "Speicherzuweisung fehlgeschlagen\n");
+        show_status_window("Memory allocation failed", "Error:");        
         return NULL;
     }
     output[0] = '\0';
@@ -442,7 +490,7 @@ char* get_status_info(const char* unit) {
     while (fgets(buffer, sizeof(buffer), fp) != NULL) {
         size_t len = strlen(buffer);
         if (total_read + len >= 8000) {
-            fprintf(stderr, "Ausgabe zu groß, wird abgeschnitten\n");
+            show_status_window("Output too large, will be cut off", "Error:");            
             break;
         }
         strcpy(output + total_read, buffer);
@@ -458,18 +506,15 @@ char* get_status_info(const char* unit) {
     return output;
 }
 
-
-
-void print_info(const char *message)
-{
-    attron(A_BOLD);
-    attron(COLOR_PAIR(3));
-    mvprintw(2, XLOAD  - 40, message);
-    refresh();
-    attroff(COLOR_PAIR(3));
-    attroff(A_BOLD);
-}
-
+/**
+ * Compares two Service structs based on the unit field in a case-insensitive manner.
+ *
+ * @param a Pointer to the first Service struct to compare.
+ * @param b Pointer to the second Service struct to compare.
+ * @return A negative value if the unit field of the first Service is lexicographically less than the second,
+ *         a positive value if the unit field of the first Service is lexicographically greater than the second,
+ *         and zero if the unit fields are equal.
+ */
 int compare_services(const void* a, const void* b)
 {
     Service* serviceA = (Service*)a;
@@ -477,6 +522,13 @@ int compare_services(const void* a, const void* b)
     return strcasecmp(serviceA->unit, serviceB->unit);
 }
 
+/**
+ * Sorts the provided array of Service structs in ascending order based on the unit field,
+ * and assigns each Service struct an index value corresponding to its position in the sorted array.
+ *
+ * @param services The array of Service structs to be sorted.
+ * @param num_services The number of Service structs in the array.
+ */
 void sort_units_services(Service* services, int num_services) {
     
     qsort(services, num_services, sizeof(Service), compare_services);
@@ -486,6 +538,13 @@ void sort_units_services(Service* services, int num_services) {
     }
 }
 
+/**
+ * Checks if the given unit string has the specified file extension.
+ *
+ * @param unit The unit string to check.
+ * @param extension The file extension to check for.
+ * @return 1 if the unit string has the specified file extension, 0 otherwise.
+ */
 int test_unit_extension(const char* unit, const char* extension)
 {
     const char* dot = strrchr(unit, '.');
@@ -501,6 +560,12 @@ int test_unit_extension(const char* unit, const char* extension)
     return 0;
 }
 
+/**
+ * Filters the services array to only include those of the specified type,
+ * and then sorts the filtered array in ascending order based on the unit field.
+ *
+ * @param modus The type of services to include in the filtered array.
+ */
 void filter_services()
 {
     int i, k = 0;
@@ -526,6 +591,10 @@ void filter_services()
     sort_units_services(filtered_services, k);
 }
 
+/**
+ * Deletes all services by resetting the service-related fields and counters.
+ * This function is used to clear the list of services before repopulating it.
+ */
 void delete_all_services()
 {
     int i;
@@ -555,6 +624,14 @@ void delete_all_services()
     total_types.snapshots = 0;
 }
 
+/**
+ * Checks if a given systemd unit type is considered "enableable", meaning it can be enabled or disabled.
+ * The function checks the unit name against a list of known enableable unit types.
+ *
+ * @param unit The name of the systemd unit to check.
+ * @return true if the unit type is considered enableable, false otherwise.
+ */
+bool is_enableable_unit_type(const char *unit);
 bool is_enableable_unit_type(const char *unit) {
     static const char *enableable_extensions[] = {
         ".service", ".socket", ".timer", ".path", ".target", ".mount", ".automount"
@@ -569,6 +646,18 @@ bool is_enableable_unit_type(const char *unit) {
     return false;
 }
 
+/**
+ * Retrieves a list of all systemd services on the system.
+ *
+ * This function connects to the systemd D-Bus interface and retrieves a list of all
+ * systemd units (services, devices, slices, etc.) on the system. The retrieved information
+ * includes the unit name, load state, active state, sub state, and description.
+ *
+ * The function populates the `services` array with the retrieved information, and updates
+ * the `total_types` struct with the counts of each unit type.
+ *
+ * @return The number of services retrieved, or -1 on error.
+ */
 int get_all_systemd_services() {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -680,13 +769,33 @@ int get_all_systemd_services() {
     return i;
 }
 
+/**
+ * Clears the screen, ends the ncurses window, and exits the program with a status of 1.
+ * This function should be called when the program needs to terminate, such as when the user
+ * requests to quit the application.
+ */
 void quit()
 {
     clear();
     endwin();
+    printf("Thank you for using ServiceMaster, I hope you enjoyed it.\n");
     exit(1);
 }
 
+/**
+ * Prints the service information for the specified index and row.
+ *
+ * If the current row matches the position, the service information is printed with
+ * a highlighted background. Otherwise, the service information is printed with a
+ * normal background.
+ *
+ * The service information includes the unit name, load state, active state, sub state,
+ * and description. If the service information is too long to fit in the available
+ * space, it is truncated and an ellipsis is added.
+ *
+ * @param i The index of the service to print.
+ * @param row The row to print the service information on.
+ */
 void print_s(int i, int row)
 {
     if(position == row)
@@ -757,20 +866,17 @@ void print_s(int i, int row)
     }
 }
 
+/**
+ * Initializes the screen for the application.
+ * This function sets up the ncurses environment, configures the terminal, and
+ * initializes the color pairs used throughout the application.
+ */
 void init_screen()
 {
     initscr();
     
     getmaxyx(stdscr, maxy, maxx);
-    char *error_message = "Sorry, your terminal is too small to use this program !";
-
-    if(maxx < 200 || maxy < 10)
-    {
-        clear();
-        mvaddstr(maxy / 2, (maxx / 2) - (strlen(error_message) / 2), error_message);
-        getch();
-        quit();
-    }
+   
     maxx_description = maxx - XDESCRIPTION - 1;
 
     raw();
@@ -798,6 +904,13 @@ void init_screen()
     refresh();
 }
 
+/**
+ * Prints the list of services based on the current display mode (modus).
+ * This function iterates through the list of filtered services and prints them
+ * to the screen, handling different display modes such as ALL, DEVICE, SLICE,
+ * SERVICE, SOCKET, TARGET, TIMER, MOUNT, SCOPE, AUTOMOUNT, SWAP, PATH, and
+ * SNAPSHOT.
+ */
 void print_services()
 {
     int max_rows = maxy - 5;
@@ -872,10 +985,15 @@ void print_services()
     }  
 }
 
+/**
+ * Prints the text and lines for the main user interface.
+ * This function is responsible for rendering the header, function keys, and mode indicators
+ * on the screen. It also updates the position and mode information based on the current state.
+ */
 void print_text_and_lines()
 {
     int x = XLOAD / 2 - 10;    
-    char *headline = "SERVICEMASTER V1.0 | Q/ESC:Quit";
+    char *headline = "ServiceMaster V1.1 | Q/ESC:Quit";
     char *functions = "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD";
     char *types = "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT";
     
@@ -969,6 +1087,15 @@ void print_text_and_lines()
     refresh();  
 }
 
+/**
+ * Reloads all systemd services and updates the display.
+ * This function is responsible for:
+ * - Resetting the position and index_start variables
+ * - Deleting all existing services
+ * - Retrieving all systemd services and storing them
+ * - Filtering the services based on the current modus
+ * - Clearing the display to prepare for the updated service list
+ */
 void reload_all(void)
 {
     position = 0;
@@ -979,15 +1106,23 @@ void reload_all(void)
     clear();
 }
 
-char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
-char *status_error = " No status information available.";
-
+/**
+ * Handles user input and performs various operations on systemd services.
+ * This function is responsible for:
+ * - Handling user input from the keyboard, including navigation, service operations, and mode changes
+ * - Updating the display based on the current state and user actions
+ * - Calling appropriate functions to perform service operations (start, stop, restart, etc.)
+ * - Reloading the service list when necessary
+ */
 void wait_input()
 {
     enum Operations op;
     bool success = false;
+    char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
+    char *status_error = " No status information available.";
     char *pos = "Command sent successfully.";
     char *neg = "Command could not be executed on this unit.";
+    char *status = NULL;
 
     int c;
 
@@ -1065,21 +1200,25 @@ void wait_input()
                 }
                 reload_all();
                 break;
-            case KEY_RETURN:            
+            case KEY_RETURN:                           
                 clear();
                 if(modus == ALL && position >= 0 && strlen(services[position + index_start].unit) > 1)
                 {
-                    if(get_status_info(services[position + index_start].unit)!= NULL)
-                        show_status_window(get_status_info(services[position + index_start].unit), "Status:");
+                    status = get_status_info(services[position + index_start].unit);
+                    if(status != NULL)
+                        show_status_window(status, "Status:");
                     else
                         show_status_window(status_error, "Status:");
                 } else if(modus != ALL && position >= 0 && strlen(filtered_services[position + index_start].unit) > 1)
                 {
-                    if(get_status_info(filtered_services[position + index_start].unit)!= NULL)
-                        show_status_window(get_status_info(filtered_services[position + index_start].unit), "Status:");                    
+                    status = get_status_info(filtered_services[position + index_start].unit);
+                    if(status != NULL)
+                        show_status_window(status, "Status:");                    
                     else
                         show_status_window(status_error, "Status:");
                 }
+                if(status != NULL)
+                    free(status);
                 break;
             case KEY_F(1):
                 if(is_system && !is_root())
@@ -1377,6 +1516,12 @@ void wait_input()
     }
 }
 
+/**
+ * The main entry point of the application.
+ * This function initializes the screen, retrieves all systemd services,
+ * filters them, and then enters a loop to wait for user input.
+ * The function returns 0 on successful exit, or -1 on error.
+ */
 int main()
 {
     char *centered_intro = center(introduction);
@@ -1413,3 +1558,4 @@ int main()
     endwin();
     return 0;
 }
+// Bug reports, feature requests and suggestions for improvement are welcome: monkeynator78@gmail.com  Lennart
