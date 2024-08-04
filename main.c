@@ -1,5 +1,6 @@
 #include <ncurses.h>
 #include <systemd/sd-bus.h>
+#include <systemd/sd-journal.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -7,12 +8,16 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/types.h>
+
+#define SD_DESTINATION "org.freedesktop.systemd1"
+#define SD_IFACE(x)  "org.freedesktop.systemd1." x
 
 #define KEY_RETURN 10
 #define KEY_ESC 27
 #define KEY_SPACE 32
-#define MAX_SERVICES 1000
+#define MAX_SERVICES 8000
 #define XLOAD 104
 #define XACTIVE 114
 #define XSUB 124
@@ -23,6 +28,9 @@
 #define CHARS_SUB 10
 #define CHARS_DESCRIPTION 100
 #define CHARS_STATUS 256
+#define CHARS_OBJECT 512
+#define UNIT_PROPERTY_SZ 256
+#define INVOCATION_SZ 33
 
 char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information. Use left/right to toggle modes and up/down"
@@ -74,7 +82,23 @@ typedef struct {
     char active[CHARS_ACTIVE];
     char sub[CHARS_SUB];
     char description[CHARS_DESCRIPTION];
-    enum Type type;        
+    char object[CHARS_OBJECT];
+    char fragment_path[UNIT_PROPERTY_SZ];
+    char unit_file_state[UNIT_PROPERTY_SZ];
+    char invocation_id[INVOCATION_SZ];
+    uint64_t exec_main_start;
+    uint32_t main_pid;
+    uint64_t tasks_current;
+    uint64_t tasks_max;
+    uint64_t memory_current;
+    uint64_t memory_peak;
+    uint64_t swap_current;
+    uint64_t swap_peak;
+    uint64_t zswap_current;
+    uint64_t zswap_peak;
+    uint64_t cpu_usage;
+    char cgroup[UNIT_PROPERTY_SZ];
+  enum Type type;
 } Service;
 
 Service services[MAX_SERVICES];
@@ -458,52 +482,320 @@ bool is_root() {
     return false;
 }
 
+int unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {
+    char ebuf[256] = {0};
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    void *data = NULL;
+    int r;
+
+    r = sd_bus_get_property(bus,
+                    SD_DESTINATION,
+                    object,
+                    iface,
+                    property,
+                    &error,
+                    &reply,
+                    fmt);
+
+    if (r < 0) {
+        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, strerror(-r));
+        goto fail;
+    }
+
+    if (sd_bus_error_is_set(&error)) {
+        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, error.message);
+        goto fail;
+    }
+
+    r = sd_bus_message_read(reply, fmt, &data);
+    if (r < 0) {
+        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, strerror(-r));
+        goto fail;
+    }
+
+    if (*fmt == 's' || *fmt== 'o')
+        strncpy(result, data, sz);
+    else
+        memcpy(result, &data, sz);
+
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+    return 0;
+
+fail:
+    show_status_window(ebuf, "Error:");
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
+    return -1;
+}
+
+char * format_unit_status(Service *svc) {
+    char buf[2048] = {0};
+    char *out = NULL;
+    char *ptr = buf;
+    time_t now = time(NULL);
+
+    ptr += snprintf(ptr, 2048, "      \n"); /* Seems to be a formatting bug elsewhere that calls for this extra space */
+    ptr += snprintf(ptr, 2048-(ptr-buf), "%30s - %s\n", svc->unit, svc->description);
+    ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s)\n", "Loaded", svc->load, svc->fragment_path);
+    if (svc->type == SERVICE) {
+        if (strcmp(svc->active, "active") == 0 && strcmp(svc->sub,"running") == 0) 
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s) since %lu seconds ago\n",
+                            "Active", svc->active, svc->sub, now - (svc->exec_main_start/1000000));
+        else
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s)\n",
+                            "Active", svc->active, svc->sub);
+
+        if (strcmp(svc->active, "active") == 0) {
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %u\n", "Main PID", svc->main_pid);
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %lu (limit: %lu)\n", 
+                            "Tasks", svc->tasks_current, svc->tasks_max);
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %.1f (peak: %.1fM swap: %.1fM swap peak: %.1fM zswap: %.1fM))\n", 
+                            "Memory",
+                            (float)svc->memory_current/1048576.0,
+                            (float)svc->memory_peak/1048576.0,
+                            (float)svc->swap_current/1048576.0,
+                            (float)svc->swap_peak/1048576.0,
+                            (float)svc->zswap_current/1048576.0);
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %lums\n", "CPU", svc->cpu_usage/1000);
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s\n", "CGroup", svc->cgroup);
+        }
+    }
+
+    ptr += snprintf(ptr, 2048-(ptr-buf), "\n\n");
+
+    out = strdup(buf);
+    if (!out)
+        return NULL;
+    return out;
+}
+
+char * unit_logs(Service *svc, int lines) {
+    sd_journal *j;
+    char *out = NULL;
+    char *ptr = NULL;
+    int r;
+    char ebuf[256] = {0};
+    char match[256] = {0};
+    int total = 0;
+    int left = lines;
+    struct logline {
+        char msg[2048];
+        char hostname[128];
+        char syslogident[128];
+        char pid[10];
+        uint64_t stamp;
+    };
+
+    struct logline *logs = NULL;
+    
+    logs = alloca(sizeof(struct logline) * lines);
+    memset(logs, 0, sizeof(*logs) * lines);
+
+    r = sd_journal_open(&j, SD_JOURNAL_SYSTEM|SD_JOURNAL_CURRENT_USER);
+    if (r < 0) {
+        snprintf(ebuf, 256, "Cannot retrieve journal: %s", strerror(-r));
+        goto fail;
+    }
+
+    snprintf(match, 256, "_SYSTEMD_INVOCATION_ID=%s", svc->invocation_id);
+    sd_journal_add_match(j, match, 0);
+
+    sd_journal_add_disjunction(j);
+    snprintf(match, 256, "USER_INVOCATION_ID=%s", svc->invocation_id);
+    sd_journal_add_match(j, match, 0);
+
+    total = 0;
+    SD_JOURNAL_FOREACH_BACKWARDS(j) {
+        size_t sz;
+        const char *val = NULL;
+
+        if (left <= 0)
+                break;
+
+        struct logline *ll = &logs[left-1];
+
+        r = sd_journal_get_realtime_usec(j, &ll->stamp);
+        if (r < 0)
+            continue;
+
+        r = sd_journal_get_data(j, "MESSAGE", (const void **)&val, &sz);
+        if (r < 0)
+            continue;
+        strncpy(ll->msg, val+8, sz-8);
+        total += sz;
+
+        r = sd_journal_get_data(j, "_HOSTNAME", (const void **)&val, &sz);
+        if (r < 0)
+            continue;
+        strncpy(ll->hostname, val+10, sz-10);
+        total += sz;
+
+        r = sd_journal_get_data(j, "SYSLOG_IDENTIFIER", (const void **)&val, &sz);
+        if (r < 0)
+            continue;
+        strncpy(ll->syslogident, val+18, sz-18);
+        total += sz;
+
+        r = sd_journal_get_data(j, "_PID", (const void **)&val, &sz);
+        if (r < 0)
+            continue;
+        strncpy(ll->pid, val+5, sz-5);
+        total += sz;
+
+        /* The 64 is to over-compensate for writing in the timestamp and whitespace later */
+        total += 64;
+        left--;
+    }
+
+    if (!total)
+        goto fin;
+
+    out = malloc(total);
+    ptr = out;
+    if (!out) {
+        snprintf(ebuf, 256, "Cannot create logs: %s", strerror(errno));
+        goto fail;
+    }
+
+    for (int i=left; i < lines; i++) {
+        struct logline *ll = &logs[i];
+        char strstamp[32] = {0};
+
+        time_t t = (ll->stamp / 1000000);
+        struct tm *tm = localtime(&t);
+        strftime(strstamp, 32, "%b %d %H:%M:%S", tm);
+
+        ptr += snprintf(ptr, total - (ptr - out), "%s %s %s[%s]: %s\n",
+                        strstamp, ll->hostname, ll->syslogident, ll->pid, ll->msg);
+    }
+
+fin:
+    sd_journal_close(j);
+    return out;
+
+fail:
+    show_status_window(ebuf, "Error");
+    sd_journal_close(j);
+    return NULL;
+}
+
+int invocation_id(sd_bus *bus, Service *svc) {
+    char ebuf[256] = {0};
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    char *ptr = NULL;
+    uint8_t *id = NULL;
+    size_t len = 0;
+    int r;
+
+    r = sd_bus_get_property(bus,
+                    SD_DESTINATION,
+                    svc->object,
+                    SD_IFACE("Unit"),
+                    "InvocationID",
+                    &error,
+                    &reply,
+                    "ay");
+
+    if (r < 0)
+        goto fail;
+
+    if (sd_bus_error_is_set(&error))
+        goto fail;
+
+    r = sd_bus_message_read_array(reply, 'y', (const void **)&id, &len);
+    if (r < 0) 
+        goto fail;
+
+    if (len != 16) {
+        r = -EINVAL;
+        goto fail;
+    }
+
+    ptr = svc->invocation_id;
+    for (size_t i=0; i < len; i++)
+        ptr += snprintf(ptr, 33 - (ptr - svc->invocation_id), "%hhx", id[i]);
+
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+    return 0;
+
+fail:
+    snprintf(ebuf, 256, "Cannot request unit %s properties: %s", svc->unit, error.message);
+    show_status_window(ebuf, "Error:");
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
+    return -1;
+
+}
+
 /**
  * Retrieves the status information for the specified system or user service unit.
  *
- * @param unit The name of the service unit to retrieve status information for.
+ * @param svc Pointer to the service structure to work on.
  * @return A dynamically allocated string containing the status information, or NULL if an error occurred.
  *         The caller is responsible for freeing the returned string.
  */
-char* get_status_info(const char* unit) {
-    char command[256];
-    char* output = malloc(8000);
-    if (output == NULL) {
-        show_status_window("Memory allocation failed", "Error:");        
-        return NULL;
-    }
-    output[0] = '\0';
+char* get_status_info(Service *svc) {
+    sd_bus *bus = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    char ebuf[256] = {0};
+    char *out = NULL;
+    char *logs = NULL;
+    int r;
 
-    if(is_system)
-        snprintf(command, sizeof(command), "systemctl status %s 2>/dev/null", unit);
-    else
-        snprintf(command, sizeof(command), "systemctl --user status %s 2>/dev/null", unit);
+    if (is_system) 
+        r = sd_bus_open_system(&bus);
+    else 
+        r = sd_bus_open_user(&bus);
 
-    FILE* fp = popen(command, "r");
-    if (fp == NULL) {
-        free(output);
-        return NULL;
-    }
-
-    char buffer[128];
-    size_t total_read = 0;
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-        size_t len = strlen(buffer);
-        if (total_read + len >= 8000) {
-            show_status_window("Output too large, will be cut off", "Error:");            
-            break;
-        }
-        strcpy(output + total_read, buffer);
-        total_read += len;
+    if (r < 0) {
+        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
+        show_status_window(ebuf, "Error");
+        goto fin;
     }
 
-    int status = pclose(fp);
-    if (status != 0 || total_read == 0) {
-        free(output);
-        return NULL;
+    if (invocation_id(bus, svc) < 0)
+      goto fin;
+
+    unit_property(bus, svc->object, SD_IFACE("Unit"), "FragmentPath", "s", svc->fragment_path, sizeof(svc->fragment_path));
+    unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", svc->unit_file_state, sizeof(svc->unit_file_state));
+    /* Add more service types and properties to seek here, for now only check SERVICE types */
+    if (svc->type == SERVICE) {
+        unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainStartTimestamp", "t", &svc->exec_main_start, sizeof(svc->exec_main_start));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainPID", "u", &svc->main_pid, sizeof(svc->main_pid));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "TasksCurrent", "t", &svc->tasks_current, sizeof(svc->tasks_current));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "TasksMax", "t", &svc->tasks_max, sizeof(svc->tasks_max));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryCurrent", "t", &svc->memory_current, sizeof(svc->memory_current));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryPeak", "t", &svc->memory_peak, sizeof(svc->memory_peak));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapCurrent", "t", &svc->swap_current, sizeof(svc->swap_current));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapPeak", "t", &svc->swap_peak, sizeof(svc->swap_peak));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryZSwapCurrent", "t", &svc->swap_current, sizeof(svc->zswap_current));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "CPUUsageNSec", "t", &svc->cpu_usage, sizeof(svc->cpu_usage));
+        unit_property(bus, svc->object, SD_IFACE("Service"), "ControlGroup", "s", &svc->cgroup, sizeof(svc->cgroup));
     }
 
-    return output;
+    out = format_unit_status(svc);
+    logs = unit_logs(svc, 10);
+    if (!logs)
+        goto fin;
+
+    out = realloc(out, strlen(out) + strlen(logs));
+    if (!out)
+        goto fin;
+
+    strcpy(out+strlen(out), logs);
+
+fin:
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
+    sd_bus_unref(bus);
+    if (logs)
+        free(logs);
+    return out;
 }
 
 /**
@@ -662,6 +954,7 @@ int get_all_systemd_services() {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
+    char ebuf[256] = {0};
     int r, i = 0;
 
     if (is_system) {
@@ -670,7 +963,9 @@ int get_all_systemd_services() {
         r = sd_bus_open_user(&bus);
     }
 
-    if (r < 0) {        
+    if (r < 0) {
+        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
+        show_status_window(ebuf, "Error");
         return -1;
     }
 
@@ -682,30 +977,35 @@ int get_all_systemd_services() {
                            &error,
                            &reply,
                            "");
-    if (r < 0) {        
+    if (r < 0) {
+        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
+        show_status_window(ebuf, "Error");
         sd_bus_error_free(&error);
         sd_bus_unref(bus);
         return -1;
     }
 
     r = sd_bus_message_enter_container(reply, 'a', "(ssssssouso)");
-    if (r < 0) {        
+    if (r < 0) {
+        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
+        show_status_window(ebuf, "Error");
         sd_bus_message_unref(reply);
         sd_bus_unref(bus);
         return -1;
     }
 
-    const char *unit, *load, *active, *sub, *description;
+    const char *unit, *load, *active, *sub, *description, *object;
     while ((r = sd_bus_message_read(reply, "(ssssssouso)", 
-            &unit, &load, &active, &sub, &description,
-            NULL, NULL, NULL, NULL, NULL)) > 0) {
+            &unit, &description, &load, &active, &sub,
+            NULL, &object, NULL, NULL, NULL)) > 0) {
         
         if (i < MAX_SERVICES) {
             strncpy(services[i].unit, unit, sizeof(services[i].unit) - 1);
-            strncpy(services[i].load, description, sizeof(services[i].load) - 1);
+            strncpy(services[i].load, load, sizeof(services[i].load) - 1);
             strncpy(services[i].active, active, sizeof(services[i].active) - 1);
             strncpy(services[i].sub, sub, sizeof(services[i].sub) - 1);
-            strncpy(services[i].description, load, sizeof(services[i].description) - 1);
+            strncpy(services[i].description, description, sizeof(services[i].description) - 1);
+            strncpy(services[i].object, object, sizeof(services[i].object) - 1);
             services[i].index = i;            
 
             if (test_unit_extension(services[i].unit, "service")) {
@@ -883,7 +1183,7 @@ void init_screen()
     noecho();
     curs_set(0);
     keypad(stdscr, TRUE);
-    nodelay(stdscr, TRUE);
+    nodelay(stdscr, FALSE);
     start_color();
     init_pair(0, COLOR_BLACK, COLOR_WHITE);
     init_pair(1, COLOR_CYAN, COLOR_BLACK);
@@ -1119,7 +1419,6 @@ void wait_input()
     enum Operations op;
     bool success = false;
     char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
-    char *status_error = " No status information available.";
     char *pos = "Command sent successfully.";
     char *neg = "Command could not be executed on this unit.";
     char *status = NULL;
@@ -1204,18 +1503,14 @@ void wait_input()
                 clear();
                 if(modus == ALL && position >= 0 && strlen(services[position + index_start].unit) > 1)
                 {
-                    status = get_status_info(services[position + index_start].unit);
+                    status = get_status_info(&services[position + index_start]);
                     if(status != NULL)
                         show_status_window(status, "Status:");
-                    else
-                        show_status_window(status_error, "Status:");
                 } else if(modus != ALL && position >= 0 && strlen(filtered_services[position + index_start].unit) > 1)
                 {
-                    status = get_status_info(filtered_services[position + index_start].unit);
+                    status = get_status_info(&filtered_services[position + index_start]);
                     if(status != NULL)
                         show_status_window(status, "Status:");                    
-                    else
-                        show_status_window(status_error, "Status:");
                 }
                 if(status != NULL)
                     free(status);
