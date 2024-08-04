@@ -88,6 +88,7 @@ typedef struct {
     char fragment_path[UNIT_PROPERTY_SZ];
     char unit_file_state[UNIT_PROPERTY_SZ];
     char invocation_id[INVOCATION_SZ];
+        
     uint64_t exec_main_start;
     uint32_t main_pid;
     uint64_t tasks_current;
@@ -100,7 +101,16 @@ typedef struct {
     uint64_t zswap_peak;
     uint64_t cpu_usage;
     char cgroup[UNIT_PROPERTY_SZ];
-  enum Type type;
+    
+    char sysfs_path[UNIT_PROPERTY_SZ];  // For DEVICE
+    char mount_where[UNIT_PROPERTY_SZ]; // For MOUNT
+    char mount_what[UNIT_PROPERTY_SZ];  // For MOUNT
+    uint64_t next_elapse;               // For TIMER
+    char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
+    uint32_t backlog;                   // For SOCKET
+    
+    
+    enum Type type;
 } Service;
 
 Service services[MAX_SERVICES];
@@ -535,40 +545,100 @@ fail:
  * @param svc The service unit to format the status for.
  * @return A dynamically allocated string containing the formatted status, or NULL on failure.
  */
-char * format_unit_status(Service *svc) {
+char* format_unit_status(Service *svc) {
     char buf[2048] = {0};
     char *out = NULL;
     char *ptr = buf;
     time_t now = time(NULL);
 
-    ptr += snprintf(ptr, 2048-(ptr-buf), "%30s - %s\n", svc->unit, svc->description);
-    ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s)\n", "Loaded", svc->load, svc->fragment_path);
-    if (svc->type == SERVICE) {
-        if (strcmp(svc->active, "active") == 0 && strcmp(svc->sub,"running") == 0) 
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s) since %lu seconds ago\n",
-                            "Active", svc->active, svc->sub, now - (svc->exec_main_start/1000000));
-        else
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s)\n",
-                            "Active", svc->active, svc->sub);
+    ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%30s - %s\n", svc->unit, svc->description);
+    ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s (%s)\n", "Loaded", svc->load, svc->fragment_path);
 
-        if (strcmp(svc->active, "active") == 0) {
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %u\n", "Main PID", svc->main_pid);
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %lu (limit: %lu)\n", 
-                            "Tasks", svc->tasks_current, svc->tasks_max);
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %.1f (peak: %.1fM swap: %.1fM swap peak: %.1fM zswap: %.1fM))\n", 
-                            "Memory",
-                            (float)svc->memory_current/1048576.0,
-                            (float)svc->memory_peak/1048576.0,
-                            (float)svc->swap_current/1048576.0,
-                            (float)svc->swap_peak/1048576.0,
-                            (float)svc->zswap_current/1048576.0);
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %lums\n", "CPU", svc->cpu_usage/1000);
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s\n", "CGroup", svc->cgroup);
-            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s", "File State", svc->unit_file_state);
+    switch (svc->type) {
+        case SERVICE:
+            if (strcmp(svc->active, "active") == 0 && strcmp(svc->sub, "running") == 0)
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s (%s) since %lu seconds ago\n",
+                    "Active", svc->active, svc->sub, now - (svc->exec_main_start / 1000000));
+            else
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s (%s)\n",
+                    "Active", svc->active, svc->sub);
+
+            if (strcmp(svc->active, "active") == 0) {
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %u\n", "Main PID", svc->main_pid);
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %lu (limit: %lu)\n",
+                    "Tasks", svc->tasks_current, svc->tasks_max);
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %.1f (peak: %.1fM swap: %.1fM swap peak: %.1fM zswap: %.1fM))\n",
+                    "Memory",
+                    (float)svc->memory_current / 1048576.0,
+                    (float)svc->memory_peak / 1048576.0,
+                    (float)svc->swap_current / 1048576.0,
+                    (float)svc->swap_peak / 1048576.0,
+                    (float)svc->zswap_current / 1048576.0);
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %lums\n", "CPU", svc->cpu_usage / 1000);
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "CGroup", svc->cgroup);
+            }
+            break;
+
+        case DEVICE:
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "SysFSPath", svc->sysfs_path);
+            break;
+
+        case MOUNT:
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "Where", svc->mount_where);
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "What", svc->mount_what);
+            break;
+
+        case TIMER:
+        {
+            time_t next_elapse_sec = svc->next_elapse / 1000000;
+            struct tm *tm_info = localtime(&next_elapse_sec);
+            char time_str[26];
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+        
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "Next Elapse", time_str);
+        
+            time_t now = time(NULL);
+            double diff_seconds = difftime(next_elapse_sec, now);
+        
+            if (diff_seconds > 0) {
+                int days = (int)(diff_seconds / 86400);
+                int hours = (int)((diff_seconds - days * 86400) / 3600);
+                int minutes = (int)((diff_seconds - days * 86400 - hours * 3600) / 60);
+                int seconds = (int)(diff_seconds - days * 86400 - hours * 3600 - minutes * 60);
+            
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: ", "Time until");
+                if (days > 0) ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d days ", days);
+                if (hours > 0) ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d hours ", hours);
+                if (minutes > 0) ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d minutes ", minutes);
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d seconds\n", seconds);
+            } else {
+                ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: In the past\n", "Time until");
+            }
         }
+        break;
+
+        case SOCKET:
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "BindIPv6Only", svc->bind_ipv6_only);
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %u\n", "Backlog", svc->backlog);
+            break;
+
+        case PATH:            
+            break;
+
+        case SLICE:
+        case TARGET:
+        case SCOPE:
+        case AUTOMOUNT:
+        case SWAP:
+        case SNAPSHOT:
+            break;
+
+        case ALL:            
+            break;
     }
 
-    ptr += snprintf(ptr, 2048-(ptr-buf), "\n\n");
+    ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "File State", svc->unit_file_state);
+    ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "\n");
 
     out = strdup(buf);
     if (!out)
@@ -770,9 +840,9 @@ char* get_status_info(Service *svc) {
     char *logs = NULL;
     int r;
 
-    if (is_system) 
+    if (is_system)
         r = sd_bus_open_system(&bus);
-    else 
+    else
         r = sd_bus_open_user(&bus);
 
     if (r < 0) {
@@ -782,23 +852,50 @@ char* get_status_info(Service *svc) {
     }
 
     if (invocation_id(bus, svc) < 0)
-      goto fin;
+        goto fin;
 
     unit_property(bus, svc->object, SD_IFACE("Unit"), "FragmentPath", "s", svc->fragment_path, sizeof(svc->fragment_path));
     unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", svc->unit_file_state, sizeof(svc->unit_file_state));
-    /* Add more service types and properties to seek here, for now only check SERVICE types */
-    if (svc->type == SERVICE) {
-        unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainStartTimestamp", "t", &svc->exec_main_start, sizeof(svc->exec_main_start));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainPID", "u", &svc->main_pid, sizeof(svc->main_pid));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "TasksCurrent", "t", &svc->tasks_current, sizeof(svc->tasks_current));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "TasksMax", "t", &svc->tasks_max, sizeof(svc->tasks_max));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryCurrent", "t", &svc->memory_current, sizeof(svc->memory_current));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryPeak", "t", &svc->memory_peak, sizeof(svc->memory_peak));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapCurrent", "t", &svc->swap_current, sizeof(svc->swap_current));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapPeak", "t", &svc->swap_peak, sizeof(svc->swap_peak));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryZSwapCurrent", "t", &svc->swap_current, sizeof(svc->zswap_current));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "CPUUsageNSec", "t", &svc->cpu_usage, sizeof(svc->cpu_usage));
-        unit_property(bus, svc->object, SD_IFACE("Service"), "ControlGroup", "s", &svc->cgroup, sizeof(svc->cgroup));
+
+    switch (svc->type) {
+        case SERVICE:
+            unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainStartTimestamp", "t", &svc->exec_main_start, sizeof(svc->exec_main_start));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "ExecMainPID", "u", &svc->main_pid, sizeof(svc->main_pid));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "TasksCurrent", "t", &svc->tasks_current, sizeof(svc->tasks_current));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "TasksMax", "t", &svc->tasks_max, sizeof(svc->tasks_max));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryCurrent", "t", &svc->memory_current, sizeof(svc->memory_current));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryPeak", "t", &svc->memory_peak, sizeof(svc->memory_peak));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapCurrent", "t", &svc->swap_current, sizeof(svc->swap_current));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "MemorySwapPeak", "t", &svc->swap_peak, sizeof(svc->swap_peak));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "MemoryZSwapCurrent", "t", &svc->zswap_current, sizeof(svc->zswap_current));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "CPUUsageNSec", "t", &svc->cpu_usage, sizeof(svc->cpu_usage));
+            unit_property(bus, svc->object, SD_IFACE("Service"), "ControlGroup", "s", &svc->cgroup, sizeof(svc->cgroup));
+            break;
+        case DEVICE:
+            unit_property(bus, svc->object, SD_IFACE("Device"), "SysFSPath", "s", svc->sysfs_path, sizeof(svc->sysfs_path));
+            break;
+        case MOUNT:
+            unit_property(bus, svc->object, SD_IFACE("Mount"), "Where", "s", svc->mount_where, sizeof(svc->mount_where));
+            unit_property(bus, svc->object, SD_IFACE("Mount"), "What", "s", svc->mount_what, sizeof(svc->mount_what));
+            break;
+        case TIMER:
+            unit_property(bus, svc->object, SD_IFACE("Timer"), "NextElapseUSecRealtime", "t", &svc->next_elapse, sizeof(svc->next_elapse));
+            break;
+        case SOCKET:
+            unit_property(bus, svc->object, SD_IFACE("Socket"), "BindIPv6Only", "s", svc->bind_ipv6_only, sizeof(svc->bind_ipv6_only));
+            unit_property(bus, svc->object, SD_IFACE("Socket"), "Backlog", "u", &svc->backlog, sizeof(svc->backlog));
+            break;
+        case PATH:            
+            break;
+        case SLICE:
+        case TARGET:
+        case SCOPE:
+        case AUTOMOUNT:
+        case SWAP:
+        case SNAPSHOT:            
+            break;
+        case ALL:            
+            break;
     }
 
     out = format_unit_status(svc);
@@ -806,18 +903,17 @@ char* get_status_info(Service *svc) {
     if (!logs)
         goto fin;
 
-    out = realloc(out, strlen(out) + strlen(logs));
+    out = realloc(out, strlen(out) + strlen(logs) + 1);
     if (!out)
         goto fin;
 
-    strcpy(out+strlen(out), logs);
+    strcat(out, logs);
 
 fin:
     sd_bus_error_free(&error);
     sd_bus_message_unref(reply);
     sd_bus_unref(bus);
-    if (logs)
-        free(logs);
+    free(logs);
     return out;
 }
 
