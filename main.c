@@ -12,7 +12,8 @@
 #include <sys/types.h>
 
 #define SD_DESTINATION "org.freedesktop.systemd1"
-#define SD_IFACE(x)  "org.freedesktop.systemd1." x
+#define SD_IFACE(x)    "org.freedesktop.systemd1." x
+#define SD_OPATH       "/org/freedesktop/systemd1"
 
 #define KEY_RETURN 10
 #define KEY_ESC 27
@@ -293,10 +294,7 @@ void show_status_window(const char *status, const char *title) {
  */
 bool daemon_reload() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus *bus = NULL;
-    const char *service = "org.freedesktop.systemd1";
-    const char *object_path = "/org/freedesktop/systemd1";
-    const char *interface = "org.freedesktop.systemd1.Manager";
+    sd_bus *bus = NULL;    
     const char *method = "Reload";
     int r;
 
@@ -306,7 +304,7 @@ bool daemon_reload() {
         return false;
     }
 
-    r = sd_bus_call_method(bus, service, object_path, interface, method, &error, NULL, NULL);
+    r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, NULL, NULL);
     if (r < 0) {
         char status_message[256];
         snprintf(status_message, sizeof(status_message), "Failed to reload daemon: %s", error.message);
@@ -338,10 +336,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL, *m = NULL;
     sd_bus *bus = NULL;
-    const char *method = NULL;
-    const char *service = "org.freedesktop.systemd1";
-    const char *object_path = "/org/freedesktop/systemd1";
-    const char *interface = "org.freedesktop.systemd1.Manager";
+    const char *method = NULL;    
     int r;
 
     if (unit == NULL) {
@@ -394,7 +389,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     char status_message[256];    
 
     if (strcmp(method, "EnableUnitFiles") == 0 || strcmp(method, "MaskUnitFiles") == 0) {
-        r = sd_bus_message_new_method_call(bus, &m, service, object_path, interface, method);
+        r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
         if (r < 0) {
             show_status_window("Failed to create method call", "Error:");
             goto finish;
@@ -419,7 +414,7 @@ bool start_operation(const char* unit, enum Operations operation) {
             goto finish;
         }
     } else if (strcmp(method, "DisableUnitFiles") == 0 || strcmp(method, "UnmaskUnitFiles") == 0) {
-        r = sd_bus_message_new_method_call(bus, &m, service, object_path, interface, method);
+        r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
         if (r < 0) {
             show_status_window("Failed to create method call", "Error:");
             goto finish;
@@ -444,7 +439,7 @@ bool start_operation(const char* unit, enum Operations operation) {
             goto finish;
         }
     } else {
-        r = sd_bus_call_method(bus, service, object_path, interface, method, &error, &reply,
+        r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, &reply,
                                "ss", unit, "replace");
         if (r < 0) {
             snprintf(status_message, sizeof(status_message), "Failed to call method: %s", error.message);
@@ -668,10 +663,14 @@ fin:
     return out;
 
 fail:
+    if (out) {
+        free(out);
+    }
     show_status_window(ebuf, "Error");
     sd_journal_close(j);
     return NULL;
 }
+
 
 int invocation_id(sd_bus *bus, Service *svc) {
     char ebuf[256] = {0};
@@ -862,6 +861,23 @@ void filter_services()
         filtered_services[i].sub[0] = '\0';
         filtered_services[i].description[0] = '\0';
         filtered_services[i].index = 0;
+        filtered_services[i].cgroup[0] = '\0';
+        filtered_services[i].exec_main_start = 0;
+        filtered_services[i].main_pid = 0;
+        filtered_services[i].tasks_current = 0;
+        filtered_services[i].tasks_max = 0;
+        filtered_services[i].memory_current = 0;
+        filtered_services[i].memory_peak = 0;
+        filtered_services[i].swap_current = 0;
+        filtered_services[i].swap_peak = 0;
+        filtered_services[i].zswap_current = 0;
+        filtered_services[i].zswap_peak = 0;
+        filtered_services[i].cpu_usage = 0;
+        filtered_services[i].type = 0;
+        filtered_services[i].object[0] = '\0';
+        filtered_services[i].fragment_path[0] = '\0';
+        filtered_services[i].unit_file_state[0] = '\0';
+        filtered_services[i].invocation_id[0] = '\0';        
     }        
 
     for(i = 0; i < num_of_services; i++)
@@ -889,7 +905,24 @@ void delete_all_services()
         services[i].active[0] = '\0';
         services[i].sub[0] = '\0';
         services[i].description[0] = '\0';
-        services[i].index = 0;          
+        services[i].index = 0;
+        services[i].cgroup[0] = '\0';
+        services[i].exec_main_start = 0;
+        services[i].main_pid = 0;
+        services[i].tasks_current = 0;
+        services[i].tasks_max = 0;
+        services[i].memory_current = 0;
+        services[i].memory_peak = 0;
+        services[i].swap_current = 0;
+        services[i].swap_peak = 0;
+        services[i].zswap_current = 0;
+        services[i].zswap_peak = 0;
+        services[i].cpu_usage = 0;
+        services[i].type = 0;
+        services[i].object[0] = '\0';
+        services[i].fragment_path[0] = '\0';
+        services[i].unit_file_state[0] = '\0';
+        services[i].invocation_id[0] = '\0';      
     }
 
     num_of_services = 0;
@@ -961,9 +994,9 @@ int get_all_systemd_services() {
     }
 
     r = sd_bus_call_method(bus,
-                           "org.freedesktop.systemd1",
-                           "/org/freedesktop/systemd1",
-                           "org.freedesktop.systemd1.Manager",
+                           SD_DESTINATION,
+                           SD_OPATH,
+                           SD_IFACE("Manager"),
                            "ListUnits",
                            &error,
                            &reply,
