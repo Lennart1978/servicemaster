@@ -32,12 +32,13 @@
 #define UNIT_PROPERTY_SZ 256
 #define INVOCATION_SZ 33
 
+
 char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information. Use left/right to toggle modes and up/down"
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: 1.1";                   
+                     "https://github.com/lennart1978/servicemaster\nVersion: 1.2";                   
 
 
 char *intro_title = "A quick introduction to ServiceMaster:";
@@ -195,15 +196,6 @@ void show_status_window(const char *status, const char *title) {
     char status_cpy[strlen(status) + 1];
     strcpy(status_cpy, status);
     int maxx_row = 0;
-
-    if(strlen(status_cpy) > 100 && status_cpy[0] != 'P' && status_cpy[0] != 'C')
-    {
-        for(int i = 0; i < 4; i++)
-        {
-            status_cpy[i] = ' ';
-        }
-    }
-  
     int current_row_length = 0;
     int rows = 0;
 
@@ -536,7 +528,6 @@ char * format_unit_status(Service *svc) {
     char *ptr = buf;
     time_t now = time(NULL);
 
-    ptr += snprintf(ptr, 2048, "      \n"); /* Seems to be a formatting bug elsewhere that calls for this extra space */
     ptr += snprintf(ptr, 2048-(ptr-buf), "%30s - %s\n", svc->unit, svc->description);
     ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s (%s)\n", "Loaded", svc->load, svc->fragment_path);
     if (svc->type == SERVICE) {
@@ -560,6 +551,7 @@ char * format_unit_status(Service *svc) {
                             (float)svc->zswap_current/1048576.0);
             ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %lums\n", "CPU", svc->cpu_usage/1000);
             ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s\n", "CGroup", svc->cgroup);
+            ptr += snprintf(ptr, 2048-(ptr-buf), "%11s: %s", "File State", svc->unit_file_state);
         }
     }
 
@@ -923,7 +915,6 @@ void delete_all_services()
  * @param unit The name of the systemd unit to check.
  * @return true if the unit type is considered enableable, false otherwise.
  */
-bool is_enableable_unit_type(const char *unit);
 bool is_enableable_unit_type(const char *unit) {
     static const char *enableable_extensions[] = {
         ".service", ".socket", ".timer", ".path", ".target", ".mount", ".automount"
@@ -1293,7 +1284,7 @@ void print_services()
 void print_text_and_lines()
 {
     int x = XLOAD / 2 - 10;    
-    char *headline = "ServiceMaster V1.1 | Q/ESC:Quit";
+    char *headline = "ServiceMaster V1.2 | Q/ESC:Quit";
     char *functions = "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD";
     char *types = "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT";
     
