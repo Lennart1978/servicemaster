@@ -618,8 +618,15 @@ char* format_unit_status(Service *svc) {
         break;
 
         case SOCKET:
-            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "BindIPv6Only", svc->bind_ipv6_only);
-            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %u\n", "Backlog", svc->backlog);
+        ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "BindIPv6Only", svc->bind_ipv6_only);
+    
+        if (svc->backlog == 2147483647 || svc->backlog == UINT32_MAX) {
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: Unlimited\n", "Backlog");
+        } else if (svc->backlog > 65535) {
+            ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: Invalid value (%u)\n", "Backlog", svc->backlog);
+        } else {
+         ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %u\n", "Backlog", svc->backlog);
+        }
             break;
 
         case PATH:            
