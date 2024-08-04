@@ -469,6 +469,18 @@ bool is_root() {
     return false;
 }
 
+/**
+ * Retrieves a unit property from the D-Bus interface.
+ *
+ * @param bus The D-Bus connection to use.
+ * @param object The D-Bus object path to query.
+ * @param iface The D-Bus interface to query.
+ * @param property The property to retrieve.
+ * @param fmt The format string for the property value.
+ * @param result A pointer to store the retrieved property value.
+ * @param sz The size of the result buffer.
+ * @return 0 on success, or a negative error code on failure.
+ */
 int unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {
     char ebuf[256] = {0};
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -517,6 +529,12 @@ fail:
     return -1;
 }
 
+/**
+ * Formats the status of a service unit.
+ *
+ * @param svc The service unit to format the status for.
+ * @return A dynamically allocated string containing the formatted status, or NULL on failure.
+ */
 char * format_unit_status(Service *svc) {
     char buf[2048] = {0};
     char *out = NULL;
@@ -558,6 +576,13 @@ char * format_unit_status(Service *svc) {
     return out;
 }
 
+/**
+ * Retrieves the logs for a given service unit.
+ *
+ * @param svc The service unit to retrieve logs for.
+ * @param lines The maximum number of log lines to retrieve.
+ * @return A dynamically allocated string containing the formatted logs, or NULL on failure.
+ */
 char * unit_logs(Service *svc, int lines) {
     sd_journal *j;
     char *out = NULL;
@@ -672,6 +697,13 @@ fail:
 }
 
 
+/**
+ * Retrieves the invocation ID for the specified system or user service unit.
+ *
+ * @param bus The D-Bus connection to use.
+ * @param svc Pointer to the service structure to work on.
+ * @return 0 on success, or a negative error code on failure.
+ */
 int invocation_id(sd_bus *bus, Service *svc) {
     char ebuf[256] = {0};
     sd_bus_error error = SD_BUS_ERROR_NULL;
