@@ -349,8 +349,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     const char *method = NULL;    
     int r;
 
-    if (unit == NULL) {
-        show_status_window("Unit name is NULL", "Error:");
+    if (unit == NULL) {        
         return false;
     }
 
@@ -360,8 +359,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     }
 
     r = is_system ? sd_bus_open_system(&bus) : sd_bus_open_user(&bus);
-    if (r < 0) {
-        show_status_window(strerror(-r), "Can't connect to bus:");
+    if (r < 0) {        
         return false;
     }
 
@@ -394,66 +392,52 @@ bool start_operation(const char* unit, enum Operations operation) {
             sd_bus_unref(bus);
             show_status_window("Invalid operation", "Error:");
             return false;
-    }
-
-    char status_message[256];    
+    }    
 
     if (strcmp(method, "EnableUnitFiles") == 0 || strcmp(method, "MaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {
-            show_status_window("Failed to create method call", "Error:");
+        if (r < 0) {            
             goto finish;
         }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {
-            show_status_window("Failed to append unit", "Error:");
+        if (r < 0) {            
             goto finish;
         }
 
         r = sd_bus_message_append(m, "bb", false, true);
-        if (r < 0) {
-            show_status_window("Failed to append arguments", "Error:");
+        if (r < 0) {           
             goto finish;
         }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {
-            snprintf(status_message, sizeof(status_message), "Failed to call method: %s", error.message);
-            show_status_window(status_message, "D-Bus Error:");
+        if (r < 0) {                
             goto finish;
         }
     } else if (strcmp(method, "DisableUnitFiles") == 0 || strcmp(method, "UnmaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {
-            show_status_window("Failed to create method call", "Error:");
+        if (r < 0) {            
             goto finish;
         }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {
-            show_status_window("Failed to append unit", "Error:");
+        if (r < 0) {            
             goto finish;
         }
 
         r = sd_bus_message_append(m, "b", false);
-        if (r < 0) {
-            show_status_window("Failed to append arguments", "Error:");
+        if (r < 0) {            
             goto finish;
         }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {
-            snprintf(status_message, sizeof(status_message), "Failed to call method: %s", error.message);
-            show_status_window(status_message, "D-Bus Error:");
+        if (r < 0) {            
             goto finish;
         }
     } else {
         r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, &reply,
                                "ss", unit, "replace");
-        if (r < 0) {
-            snprintf(status_message, sizeof(status_message), "Failed to call method: %s", error.message);
-            show_status_window(status_message, "D-Bus Error:");
+        if (r < 0) {           
             goto finish;
         }
     }    
@@ -491,8 +475,7 @@ bool is_root() {
  * @param sz The size of the result buffer.
  * @return 0 on success, or a negative error code on failure.
  */
-int unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {
-    char ebuf[256] = {0};
+bool unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {    
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
     void *data = NULL;
@@ -507,19 +490,16 @@ int unit_property(sd_bus *bus, const char *object, const char *iface, const char
                     &reply,
                     fmt);
 
-    if (r < 0) {
-        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, strerror(-r));
+    if (r < 0) {        
         goto fail;
     }
 
-    if (sd_bus_error_is_set(&error)) {
-        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, error.message);
+    if (sd_bus_error_is_set(&error)) {        
         goto fail;
     }
 
     r = sd_bus_message_read(reply, fmt, &data);
-    if (r < 0) {
-        snprintf(ebuf, 256, "Cannot request unit property %s: %s", property, strerror(-r));
+    if (r < 0) {        
         goto fail;
     }
 
@@ -530,13 +510,13 @@ int unit_property(sd_bus *bus, const char *object, const char *iface, const char
 
     sd_bus_message_unref(reply);
     sd_bus_error_free(&error);
-    return 0;
+    return true;
 
 fail:
-    show_status_window(ebuf, "Error:");
+    strncpy(result, "", 2);
     sd_bus_error_free(&error);
     sd_bus_message_unref(reply);
-    return -1;
+    return false;
 }
 
 /**
@@ -781,8 +761,7 @@ fail:
  * @param svc Pointer to the service structure to work on.
  * @return 0 on success, or a negative error code on failure.
  */
-int invocation_id(sd_bus *bus, Service *svc) {
-    char ebuf[256] = {0};
+bool invocation_id(sd_bus *bus, Service *svc) {    
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
     char *ptr = NULL;
@@ -820,14 +799,12 @@ int invocation_id(sd_bus *bus, Service *svc) {
 
     sd_bus_message_unref(reply);
     sd_bus_error_free(&error);
-    return 0;
+    return true;
 
-fail:
-    snprintf(ebuf, 256, "Cannot request unit %s properties: %s", svc->unit, error.message);
-    show_status_window(ebuf, "Error:");
+fail:        
     sd_bus_error_free(&error);
     sd_bus_message_unref(reply);
-    return -1;
+    return false;
 
 }
 
@@ -841,8 +818,7 @@ fail:
 char* get_status_info(Service *svc) {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;
-    char ebuf[256] = {0};
+    sd_bus_message *reply = NULL;    
     char *out = NULL;
     char *logs = NULL;
     int r;
@@ -852,13 +828,11 @@ char* get_status_info(Service *svc) {
     else
         r = sd_bus_open_user(&bus);
 
-    if (r < 0) {
-        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
-        show_status_window(ebuf, "Error");
+    if (r < 0) {        
         goto fin;
     }
 
-    if (invocation_id(bus, svc) < 0)
+    if (invocation_id(bus, svc) == false)
         goto fin;
 
     unit_property(bus, svc->object, SD_IFACE("Unit"), "FragmentPath", "s", svc->fragment_path, sizeof(svc->fragment_path));
@@ -1112,8 +1086,7 @@ bool is_enableable_unit_type(const char *unit) {
 int get_all_systemd_services() {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;
-    char ebuf[256] = {0};
+    sd_bus_message *reply = NULL;    
     int r, i = 0;
 
     if (is_system) {
@@ -1122,10 +1095,8 @@ int get_all_systemd_services() {
         r = sd_bus_open_user(&bus);
     }
 
-    if (r < 0) {
-        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
-        show_status_window(ebuf, "Error");
-        return -1;
+    if (r < 0) {        
+        return 0;
     }
 
     r = sd_bus_call_method(bus,
@@ -1136,18 +1107,14 @@ int get_all_systemd_services() {
                            &error,
                            &reply,
                            "");
-    if (r < 0) {
-        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
-        show_status_window(ebuf, "Error");
+    if (r < 0) {       
         sd_bus_error_free(&error);
         sd_bus_unref(bus);
         return -1;
     }
 
     r = sd_bus_message_enter_container(reply, 'a', "(ssssssouso)");
-    if (r < 0) {
-        snprintf(ebuf, 255, "Error opening bus: %s", strerror(-r));
-        show_status_window(ebuf, "Error");
+    if (r < 0) {       
         sd_bus_message_unref(reply);
         sd_bus_unref(bus);
         return -1;
@@ -1580,6 +1547,7 @@ void wait_input()
     char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
     char *pos = "Command sent successfully.";
     char *neg = "Command could not be executed on this unit.";
+    char *no_status = "No status information available.";
     char *status = NULL;
 
     int c;
@@ -1673,6 +1641,8 @@ void wait_input()
                 }
                 if(status != NULL)
                     free(status);
+                else if(status == NULL)
+                    show_status_window(no_status, "Status:");
                 break;
             case KEY_F(1):
                 if(is_system && !is_root())
