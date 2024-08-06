@@ -1552,6 +1552,7 @@ void wait_input()
 	exit(EXIT_FAILURE);
     }
 
+    sd_event_unref(ev);
     return;
 }
 
@@ -1996,10 +1997,113 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
     return 0;
 }
+
+int remove_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    char buf[256] = {0};
+    int  rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "New user callback failed: %s", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    snprintf(buf, 256, "Unit %s at %s\n", name, object);
+    //show_status_window(buf, "Unit Removed");
+
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int add_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    char buf[256] = {0};
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "New user callback failed: %s", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    snprintf(buf, 256, "Unit %s at %s\n", name, object);
+    //show_status_window(buf, "Unit Added");
+
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *property = NULL;
+    char buf[256] = {0};
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "New user callback failed: %s", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "s", &property);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    snprintf(buf, 256, "Unit %s", property);
+    show_status_window(buf, "Unit Changed");
+
+    sd_bus_error_free(err);
+    return 0;
+}
+
 #pragma GCC diagnostic pop
+
+
+void watch_systemd_property(sd_bus *bus, const char *property)
+{
+    int rc;
+    char match[512] = {0};
+
+    snprintf(match, 512,
+             "type='signal',sender='" SD_DESTINATION "',interface='" SD_IFACE("Unit") "',"
+	     "member='%s',path_namespace='/org/freedesktop/systemd1/unit'",
+	     property);
+
+    rc = sd_bus_add_match(bus, NULL, match, changed_unit, NULL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot setup watcher on property: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+}
+
 /* Configures initial dbus needed for long running systemd event handling */
 void setup_dbus()
 {
+    sd_event *ev = NULL;
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
     int rc = -1;
@@ -2024,6 +2128,37 @@ void setup_dbus()
     if (sd_bus_error_is_set(&error)) {
         endwin();
 	fprintf(stderr, "Cannot subcribe to systemd dbus events: %s\n", error.message);
+	exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_match_signal(bus, NULL, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "UnitNew", add_unit, NULL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot register interest in new units: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_match_signal(bus, NULL, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "UnitRemoved", remove_unit, NULL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot register interest removed units: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    rc = sd_event_default(&ev);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot fetch default event handler: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    watch_systemd_property(bus, "ActiveState");
+    watch_systemd_property(bus, "SubState");
+
+    rc = sd_bus_attach_event(bus, ev, SD_EVENT_PRIORITY_NORMAL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Unable to attach bus to event loop: %s\n", strerror(-rc));
 	exit(EXIT_FAILURE);
     }
 
@@ -2055,7 +2190,6 @@ void setup_event_loop()
 	fprintf(stderr, "Cannot initialize event handler: %s\n", strerror(-rc));
 	exit(EXIT_FAILURE);
     }
-
 }
 
 /**
