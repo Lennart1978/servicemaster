@@ -34,8 +34,9 @@
 #define UNIT_PROPERTY_SZ 256
 #define INVOCATION_SZ 33
 
+void print_services();
 
-char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
+const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information. Use left/right to toggle modes and up/down"
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
@@ -43,7 +44,9 @@ char *introduction = "Press Space to switch between system and user systemd unit
                      "https://github.com/lennart1978/servicemaster\nVersion: 1.2";
 
 
-char *intro_title = "A quick introduction to ServiceMaster:";
+const char *intro_title = "A quick introduction to ServiceMaster:";
+
+FILE *logfile = NULL;
 
 int maxx, maxy, position, num_of_services, index_start;
 size_t maxx_description;
@@ -109,9 +112,9 @@ typedef struct {
     uint64_t next_elapse;               // For TIMER
     char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
     uint32_t backlog;                   // For SOCKET
-
-
+					//
     enum Type type;
+    sd_bus_slot *slot;
 } Service;
 
 Service services[MAX_SERVICES];
@@ -442,9 +445,11 @@ bool start_operation(const char* unit, enum Operations operation) {
         }
     }
 
+    /*
     if (!daemon_reload()) {
         show_status_window("Failed to reload daemon after operation", "Warning:");
     }
+    */
 
 finish:
     sd_bus_error_free(&error);
@@ -893,6 +898,15 @@ fin:
     return out;
 }
 
+Service * service_from_path(const char *path)
+{
+    for (int i=0; i < num_of_services; i++) {
+        if (strcmp(services[i].object, path) == 0)
+            return &services[i];
+    }
+    return NULL;
+}
+
 /**
  * Compares two Service structs based on the unit field in a case-insensitive manner.
  *
@@ -1074,6 +1088,178 @@ bool is_enableable_unit_type(const char *unit) {
     return false;
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+int remove_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    int  rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Remove unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    fprintf(logfile, "Add %s unit (%s)\n", name, object);
+    fflush(logfile);
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int add_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Add unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    fprintf(logfile, "Remove %s unit (%s)\n", name, object);
+    fflush(logfile);
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    Service *svc;
+    int changed = 0;
+    const char *iface = NULL;
+    const char *path = NULL;
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Changed unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Interface name */
+    rc = sd_bus_message_read(reply, "s", &iface);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    path = sd_bus_message_get_path(reply);
+    svc = service_from_path(path);
+
+    /* If no matching object, give up */
+    if (!svc) {
+        fprintf(logfile, "Skipping missing object: %s\n", path);
+	fflush(logfile);
+        goto fin;
+    }
+    fprintf(logfile, "Found object:            %s\n", path);
+    fflush(logfile);
+
+    /* If the interface is not a unit, we dont care */
+    if (strcmp(iface, SD_IFACE("Unit")) != 0) {
+	fprintf(logfile, "Skipping interface       %s\n", iface);
+	fflush(logfile);
+        goto fin;
+    }
+
+    rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot read array in dbus message: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    /* Array of dictionaries */
+    while (true) {
+        const char *k;
+	const char *v;
+        rc = sd_bus_message_enter_container(reply, 'e', "sv");
+        if (rc < 0) {
+            endwin();
+	    fprintf(stderr, "Cannot read dict item in dbus message: %s\n", strerror(-rc));
+	    exit(EXIT_FAILURE);
+        }
+
+	/* No more array entries to read */
+        if (rc == 0)
+            break; 
+
+        /* Next item is the key out of the dictionary */
+        rc = sd_bus_message_read(reply, "s", &k);
+        if (rc < 0) {
+            endwin();
+            fprintf(stderr, "Cannot read dictionary key item from array: %s\n", strerror(-rc));
+            exit(EXIT_FAILURE);
+        }
+
+	/* If the property we want to measure, update the related property */
+	if (strcmp(k, "ActiveState") == 0) {
+            rc = sd_bus_message_read(reply, "v", "s", &v);
+            if (rc < 0) {
+                endwin();
+		fprintf(stderr, "Cannot fetch value from dictionary: %s\n", strerror(-rc));
+	        exit(EXIT_FAILURE);
+            }
+	     
+            strncpy(svc->active, v, UNIT_PROPERTY_SZ);
+	    changed++;
+        }
+	else if (strcmp(k, "SubState") == 0) {
+            rc = sd_bus_message_read(reply, "v", "s", &v);
+            if (rc < 0) {
+                endwin();
+                fprintf(stderr, "Cannot fetch value from dictionary: %s\n", strerror(-rc));
+                exit(EXIT_FAILURE);
+            }
+
+            strncpy(svc->sub, v, UNIT_PROPERTY_SZ);
+	    changed++;
+        }
+	else
+          sd_bus_message_skip(reply, NULL);
+
+        if (sd_bus_message_exit_container(reply) < 0) {
+            endwin();
+            fprintf(stderr, "Cannot exit dictionary: %s\n", strerror(-rc));
+            exit(EXIT_FAILURE);
+        }	    
+    }
+
+    sd_bus_message_exit_container(reply);
+
+    /* Redraw screen if something changed */
+    if (changed) {
+        fprintf(logfile, "Changed services: %d\n", changed);
+	fflush(logfile);
+	//filter_services();
+	print_services();
+        refresh();
+    }
+fin:
+    sd_bus_error_free(err);
+    return 0;
+}
+#pragma GCC diagnostic pop
+
 /**
  * Retrieves a list of all systemd services on the system.
  *
@@ -1175,7 +1361,22 @@ int get_all_systemd_services() {
             services[i].sub[sizeof(services[i].sub) - 1] = '\0';
             services[i].description[sizeof(services[i].description) - 1] = '\0';
 
-            i++;
+	    /* Register interest in events on this object */
+            r = sd_bus_match_signal(bus, 
+                                    &services[i].slot,
+				    SD_DESTINATION,
+				    object,
+				    "org.freedesktop.DBus.Properties",
+				    "PropertiesChanged",
+				    changed_unit,
+				    NULL);
+            if (r < 0) {
+                endwin();
+	        fprintf(stderr, "Cannot register interest changed units: %s\n", strerror(-r));
+        	exit(EXIT_FAILURE);
+            }
+
+	    i++;
         }
 
         if (i >= MAX_SERVICES) {
@@ -1680,7 +1881,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 {
                     is_system = true;
                 }
-                reload_all();
+                //reload_all();
                 break;
             case KEY_RETURN:
                 clear();
@@ -1717,7 +1918,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Start:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Start:");
@@ -1739,7 +1940,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Stop:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Stop:");
@@ -1761,7 +1962,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Restart:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Restart:");
@@ -1783,7 +1984,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Enable:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Enable:");
@@ -1805,7 +2006,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Disable:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Disable:");
@@ -1827,7 +2028,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Mask:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Mask:");
@@ -1849,7 +2050,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Unmask:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Unmask:");
@@ -1871,7 +2072,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 if(success)
                 {
                     show_status_window(pos, "Reload:");
-                    reload_all();
+                    //reload_all();
                 }
                 else
                     show_status_window(neg, "Reload:");
@@ -1997,108 +2198,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
     return 0;
 }
-
-int remove_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
-{
-    char *name = NULL;
-    char *object = NULL;
-    char buf[256] = {0};
-    int  rc;
-
-    if (sd_bus_error_is_set(err)) {
-        endwin();
-        fprintf(stderr, "New user callback failed: %s", err->message);
-        exit(EXIT_FAILURE);
-    }
-
-    rc = sd_bus_message_read(reply, "so", &name, &object);
-    if (rc < 0) {
-        endwin();
-	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
-	exit(EXIT_FAILURE);
-    }
-
-    snprintf(buf, 256, "Unit %s at %s\n", name, object);
-    //show_status_window(buf, "Unit Removed");
-
-    sd_bus_error_free(err);
-    return 0;
-}
-
-int add_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
-{
-    char *name = NULL;
-    char *object = NULL;
-    char buf[256] = {0};
-    int rc;
-
-    if (sd_bus_error_is_set(err)) {
-        endwin();
-        fprintf(stderr, "New user callback failed: %s", err->message);
-        exit(EXIT_FAILURE);
-    }
-
-    rc = sd_bus_message_read(reply, "so", &name, &object);
-    if (rc < 0) {
-        endwin();
-	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
-	exit(EXIT_FAILURE);
-    }
-
-    snprintf(buf, 256, "Unit %s at %s\n", name, object);
-    //show_status_window(buf, "Unit Added");
-
-    sd_bus_error_free(err);
-    return 0;
-}
-
-int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
-{
-    char *property = NULL;
-    char buf[256] = {0};
-    int rc;
-
-    if (sd_bus_error_is_set(err)) {
-        endwin();
-        fprintf(stderr, "New user callback failed: %s", err->message);
-        exit(EXIT_FAILURE);
-    }
-
-    rc = sd_bus_message_read(reply, "s", &property);
-    if (rc < 0) {
-        endwin();
-	fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
-	exit(EXIT_FAILURE);
-    }
-
-    snprintf(buf, 256, "Unit %s", property);
-    show_status_window(buf, "Unit Changed");
-
-    sd_bus_error_free(err);
-    return 0;
-}
-
 #pragma GCC diagnostic pop
-
-
-void watch_systemd_property(sd_bus *bus, const char *property)
-{
-    int rc;
-    char match[512] = {0};
-
-    snprintf(match, 512,
-             "type='signal',sender='" SD_DESTINATION "',interface='" SD_IFACE("Unit") "',"
-	     "member='%s',path_namespace='/org/freedesktop/systemd1/unit'",
-	     property);
-
-    rc = sd_bus_add_match(bus, NULL, match, changed_unit, NULL);
-    if (rc < 0) {
-        endwin();
-	fprintf(stderr, "Cannot setup watcher on property: %s\n", strerror(-rc));
-	exit(EXIT_FAILURE);
-    }
-
-}
 
 /* Configures initial dbus needed for long running systemd event handling */
 void setup_dbus()
@@ -2152,9 +2252,6 @@ void setup_dbus()
 	exit(EXIT_FAILURE);
     }
 
-    watch_systemd_property(bus, "ActiveState");
-    watch_systemd_property(bus, "SubState");
-
     rc = sd_bus_attach_event(bus, ev, SD_EVENT_PRIORITY_NORMAL);
     if (rc < 0) {
         endwin();
@@ -2202,6 +2299,12 @@ int main()
 {
     char *centered_intro = center(introduction);
 
+    logfile = fopen("/tmp/smaster.txt", "a");
+    if (!logfile) {
+        fprintf(stderr, "Cannot open log file: %s\n", strerror(errno));
+	exit(EXIT_FAILURE);
+    }
+
     if(is_root())
         is_system = true;
     else
@@ -2212,7 +2315,8 @@ int main()
     index_start = 0;
     
     init_screen();
-
+    
+    setup_dbus();
     num_of_services = get_all_systemd_services();
     if (num_of_services < 0) {
         endwin();
@@ -2230,7 +2334,6 @@ int main()
     print_services();
 
     setup_event_loop();
-    setup_dbus();
 
     refresh();
     wait_input();
