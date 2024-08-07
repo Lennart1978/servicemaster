@@ -1031,7 +1031,15 @@ void delete_all_services()
         services[i].object[0] = '\0';
         services[i].fragment_path[0] = '\0';
         services[i].unit_file_state[0] = '\0';
-        services[i].invocation_id[0] = '\0';      
+        services[i].invocation_id[0] = '\0';
+        services[i].backlog = 0;
+        services[i].bind_ipv6_only[0] = '\0';
+        services[i].mount_where[0] = '\0';
+        services[i].mount_what[0] = '\0';
+        services[i].next_elapse = 0;
+        services[i].sysfs_path[0] = '\0';
+        services[i].tasks_current = 0;
+        services[i].tasks_max = 0;       
     }
 
     num_of_services = 0;
@@ -1523,9 +1531,7 @@ void print_text_and_lines()
  * - Clearing the display to prepare for the updated service list
  */
 void reload_all(void)
-{
-    position = 0;
-    index_start = 0;
+{    
     delete_all_services();
     num_of_services = get_all_systemd_services();
     filter_services();
