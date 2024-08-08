@@ -21,7 +21,7 @@ ServiceMaster is a powerful terminal-based tool for managing systemd units on Li
 
 After launching ServiceMaster, you can use the following controls:
 
-- Arrow keys: Navigate through the list of units
+- Arrow keys, page up/down: Navigate through the list of units
 - Space: Toggle between system and user units
 - Enter: Show detailed status of the selected unit
 - F1-F8: Perform actions (start, stop, restart, etc.) on the selected unit
