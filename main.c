@@ -39,7 +39,7 @@ char *introduction = "Press Space to switch between system and user systemd unit
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: 1.2";                   
+                     "https://github.com/lennart1978/servicemaster\nVersion: 1.2";
 
 
 char *intro_title = "A quick introduction to ServiceMaster:";
@@ -88,7 +88,7 @@ typedef struct {
     char fragment_path[UNIT_PROPERTY_SZ];
     char unit_file_state[UNIT_PROPERTY_SZ];
     char invocation_id[INVOCATION_SZ];
-        
+
     uint64_t exec_main_start;
     uint32_t main_pid;
     uint64_t tasks_current;
@@ -101,15 +101,15 @@ typedef struct {
     uint64_t zswap_peak;
     uint64_t cpu_usage;
     char cgroup[UNIT_PROPERTY_SZ];
-    
+
     char sysfs_path[UNIT_PROPERTY_SZ];  // For DEVICE
     char mount_where[UNIT_PROPERTY_SZ]; // For MOUNT
     char mount_what[UNIT_PROPERTY_SZ];  // For MOUNT
     uint64_t next_elapse;               // For TIMER
     char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
     uint32_t backlog;                   // For SOCKET
-    
-    
+
+
     enum Type type;
 } Service;
 
@@ -153,7 +153,7 @@ char* center(const char *text) {
         if (len > max_line_length) {
             max_line_length = len;
         }
-        total_length += len + 1; 
+        total_length += len + 1;
         line_count++;
         line = strtok_r(NULL, "\n", &saveptr);
     }
@@ -166,7 +166,7 @@ char* center(const char *text) {
 
     char *output = result;
     const char *input_ptr = text;
-    while (*input_ptr) { 
+    while (*input_ptr) {
         if (*input_ptr == '\n' && (input_ptr == text || *(input_ptr - 1) == '\n')) {
             *output++ = '\n';
             input_ptr++;
@@ -249,20 +249,20 @@ void show_status_window(const char *status, const char *title) {
     int startx = (maxx - width) / 2;
 
     WINDOW *win = newwin(height, width, starty, startx);
-    box(win, 0, 0);    
+    box(win, 0, 0);
 
     keypad(win, TRUE);
     start_color();
     init_pair(13, COLOR_RED, COLOR_BLACK);
 
-    int text_starty = 1;  
+    int text_starty = 1;
     int y = text_starty;
     int x = 1;
 
     wattron(win, A_BOLD);
     wattron(win, A_UNDERLINE);
-    
-    mvwprintw(win, 0, width / 2 - strlen(title) / 2, title);
+
+    mvwprintw(win, 0, width / 2 - strlen(title) / 2, "%s", title);
     wattroff(win, A_UNDERLINE);
 
     if(rows == 0)
@@ -278,7 +278,7 @@ void show_status_window(const char *status, const char *title) {
     }
 
     mvwprintw(win, y, x, "%s", line_start);
-    
+
     wrefresh(win);
 
     wgetch(win);
@@ -288,7 +288,7 @@ void show_status_window(const char *status, const char *title) {
 
     delwin(win);
     refresh();
-   
+
 }
 
 /**
@@ -304,7 +304,7 @@ void show_status_window(const char *status, const char *title) {
  */
 bool daemon_reload() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus *bus = NULL;    
+    sd_bus *bus = NULL;
     const char *method = "Reload";
     int r;
 
@@ -322,7 +322,7 @@ bool daemon_reload() {
         sd_bus_error_free(&error);
         sd_bus_unref(bus);
         return false;
-    }    
+    }
     sd_bus_unref(bus);
     return true;
 }
@@ -346,10 +346,10 @@ bool start_operation(const char* unit, enum Operations operation) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL, *m = NULL;
     sd_bus *bus = NULL;
-    const char *method = NULL;    
+    const char *method = NULL;
     int r;
 
-    if (unit == NULL) {        
+    if (unit == NULL) {
         return false;
     }
 
@@ -359,7 +359,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     }
 
     r = is_system ? sd_bus_open_system(&bus) : sd_bus_open_user(&bus);
-    if (r < 0) {        
+    if (r < 0) {
         return false;
     }
 
@@ -392,55 +392,55 @@ bool start_operation(const char* unit, enum Operations operation) {
             sd_bus_unref(bus);
             show_status_window("Invalid operation", "Error:");
             return false;
-    }    
+    }
 
     if (strcmp(method, "EnableUnitFiles") == 0 || strcmp(method, "MaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_message_append(m, "bb", false, true);
-        if (r < 0) {           
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {                
+        if (r < 0) {
             goto finish;
         }
     } else if (strcmp(method, "DisableUnitFiles") == 0 || strcmp(method, "UnmaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_message_append(m, "b", false);
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {            
+        if (r < 0) {
             goto finish;
         }
     } else {
         r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, &reply,
                                "ss", unit, "replace");
-        if (r < 0) {           
+        if (r < 0) {
             goto finish;
         }
-    }    
+    }
 
     if (!daemon_reload()) {
         show_status_window("Failed to reload daemon after operation", "Warning:");
@@ -475,7 +475,7 @@ bool is_root() {
  * @param sz The size of the result buffer.
  * @return 0 on success, or a negative error code on failure.
  */
-bool unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {    
+bool unit_property(sd_bus *bus, const char *object, const char *iface, const char *property, const char *fmt, void *result, int sz) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
     void *data = NULL;
@@ -490,16 +490,16 @@ bool unit_property(sd_bus *bus, const char *object, const char *iface, const cha
                     &reply,
                     fmt);
 
-    if (r < 0) {        
+    if (r < 0) {
         goto fail;
     }
 
-    if (sd_bus_error_is_set(&error)) {        
+    if (sd_bus_error_is_set(&error)) {
         goto fail;
     }
 
     r = sd_bus_message_read(reply, fmt, &data);
-    if (r < 0) {        
+    if (r < 0) {
         goto fail;
     }
 
@@ -574,18 +574,18 @@ char* format_unit_status(Service *svc) {
             struct tm *tm_info = localtime(&next_elapse_sec);
             char time_str[26];
             strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
-        
+
             ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "Next Elapse", time_str);
-        
+
             time_t now = time(NULL);
             double diff_seconds = difftime(next_elapse_sec, now);
-        
+
             if (diff_seconds > 0) {
                 int days = (int)(diff_seconds / 86400);
                 int hours = (int)((diff_seconds - days * 86400) / 3600);
                 int minutes = (int)((diff_seconds - days * 86400 - hours * 3600) / 60);
                 int seconds = (int)(diff_seconds - days * 86400 - hours * 3600 - minutes * 60);
-            
+
                 ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: ", "Time until");
                 if (days > 0) ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d days ", days);
                 if (hours > 0) ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%d hours ", hours);
@@ -599,7 +599,7 @@ char* format_unit_status(Service *svc) {
 
         case SOCKET:
         ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: %s\n", "BindIPv6Only", svc->bind_ipv6_only);
-    
+
         if (svc->backlog == 2147483647 || svc->backlog == UINT32_MAX) {
             ptr += snprintf(ptr, sizeof(buf) - (ptr - buf), "%11s: Unlimited\n", "Backlog");
         } else if (svc->backlog > 65535) {
@@ -609,7 +609,7 @@ char* format_unit_status(Service *svc) {
         }
             break;
 
-        case PATH:            
+        case PATH:
             break;
 
         case SLICE:
@@ -620,7 +620,7 @@ char* format_unit_status(Service *svc) {
         case SNAPSHOT:
             break;
 
-        case ALL:            
+        case ALL:
             break;
     }
 
@@ -658,7 +658,7 @@ char * unit_logs(Service *svc, int lines) {
     };
 
     struct logline *logs = NULL;
-    
+
     logs = alloca(sizeof(struct logline) * lines);
     memset(logs, 0, sizeof(*logs) * lines);
 
@@ -761,7 +761,7 @@ fail:
  * @param svc Pointer to the service structure to work on.
  * @return 0 on success, or a negative error code on failure.
  */
-bool invocation_id(sd_bus *bus, Service *svc) {    
+bool invocation_id(sd_bus *bus, Service *svc) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
     char *ptr = NULL;
@@ -785,7 +785,7 @@ bool invocation_id(sd_bus *bus, Service *svc) {
         goto fail;
 
     r = sd_bus_message_read_array(reply, 'y', (const void **)&id, &len);
-    if (r < 0) 
+    if (r < 0)
         goto fail;
 
     if (len != 16) {
@@ -801,7 +801,7 @@ bool invocation_id(sd_bus *bus, Service *svc) {
     sd_bus_error_free(&error);
     return true;
 
-fail:        
+fail:
     sd_bus_error_free(&error);
     sd_bus_message_unref(reply);
     return false;
@@ -818,7 +818,7 @@ fail:
 char* get_status_info(Service *svc) {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;    
+    sd_bus_message *reply = NULL;
     char *out = NULL;
     char *logs = NULL;
     int r;
@@ -828,7 +828,7 @@ char* get_status_info(Service *svc) {
     else
         r = sd_bus_open_user(&bus);
 
-    if (r < 0) {        
+    if (r < 0) {
         goto fin;
     }
 
@@ -866,16 +866,16 @@ char* get_status_info(Service *svc) {
             unit_property(bus, svc->object, SD_IFACE("Socket"), "BindIPv6Only", "s", svc->bind_ipv6_only, sizeof(svc->bind_ipv6_only));
             unit_property(bus, svc->object, SD_IFACE("Socket"), "Backlog", "u", &svc->backlog, sizeof(svc->backlog));
             break;
-        case PATH:            
+        case PATH:
             break;
         case SLICE:
         case TARGET:
         case SCOPE:
         case AUTOMOUNT:
         case SWAP:
-        case SNAPSHOT:            
+        case SNAPSHOT:
             break;
-        case ALL:            
+        case ALL:
             break;
     }
 
@@ -922,7 +922,7 @@ int compare_services(const void* a, const void* b)
  * @param num_services The number of Service structs in the array.
  */
 void sort_units_services(Service* services, int num_services) {
-    
+
     qsort(services, num_services, sizeof(Service), compare_services);
 
     for (int i = 0; i < num_services; i++) {
@@ -961,7 +961,7 @@ int test_unit_extension(const char* unit, const char* extension)
 void filter_services()
 {
     int i, k = 0;
-  
+
     for(i = 0; i < num_of_services; i++)
     {
         filtered_services[i].unit[0] = '\0';
@@ -986,8 +986,8 @@ void filter_services()
         filtered_services[i].object[0] = '\0';
         filtered_services[i].fragment_path[0] = '\0';
         filtered_services[i].unit_file_state[0] = '\0';
-        filtered_services[i].invocation_id[0] = '\0';        
-    }        
+        filtered_services[i].invocation_id[0] = '\0';
+    }
 
     for(i = 0; i < num_of_services; i++)
     {
@@ -1039,7 +1039,7 @@ void delete_all_services()
         services[i].next_elapse = 0;
         services[i].sysfs_path[0] = '\0';
         services[i].tasks_current = 0;
-        services[i].tasks_max = 0;       
+        services[i].tasks_max = 0;
     }
 
     num_of_services = 0;
@@ -1094,7 +1094,7 @@ bool is_enableable_unit_type(const char *unit) {
 int get_all_systemd_services() {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;    
+    sd_bus_message *reply = NULL;
     int r, i = 0;
 
     if (is_system) {
@@ -1103,7 +1103,7 @@ int get_all_systemd_services() {
         r = sd_bus_open_user(&bus);
     }
 
-    if (r < 0) {        
+    if (r < 0) {
         return 0;
     }
 
@@ -1115,24 +1115,24 @@ int get_all_systemd_services() {
                            &error,
                            &reply,
                            "");
-    if (r < 0) {       
+    if (r < 0) {
         sd_bus_error_free(&error);
         sd_bus_unref(bus);
         return -1;
     }
 
     r = sd_bus_message_enter_container(reply, 'a', "(ssssssouso)");
-    if (r < 0) {       
+    if (r < 0) {
         sd_bus_message_unref(reply);
         sd_bus_unref(bus);
         return -1;
     }
 
     const char *unit, *load, *active, *sub, *description, *object;
-    while ((r = sd_bus_message_read(reply, "(ssssssouso)", 
+    while ((r = sd_bus_message_read(reply, "(ssssssouso)",
             &unit, &description, &load, &active, &sub,
             NULL, &object, NULL, NULL, NULL)) > 0) {
-        
+
         if (i < MAX_SERVICES) {
             strncpy(services[i].unit, unit, sizeof(services[i].unit) - 1);
             strncpy(services[i].load, load, sizeof(services[i].load) - 1);
@@ -1140,7 +1140,7 @@ int get_all_systemd_services() {
             strncpy(services[i].sub, sub, sizeof(services[i].sub) - 1);
             strncpy(services[i].description, description, sizeof(services[i].description) - 1);
             strncpy(services[i].object, object, sizeof(services[i].object) - 1);
-            services[i].index = i;            
+            services[i].index = i;
 
             if (test_unit_extension(services[i].unit, "service")) {
                 total_types.services++;
@@ -1188,12 +1188,12 @@ int get_all_systemd_services() {
 
             i++;
         }
-        
-        if (i >= MAX_SERVICES) {            
+
+        if (i >= MAX_SERVICES) {
             break;
         }
     }
-    
+
     sd_bus_message_exit_container(reply);
     sd_bus_message_unref(reply);
     sd_bus_unref(bus);
@@ -1239,23 +1239,23 @@ void print_s(int i, int row)
     }
     else
     {
-        attroff(COLOR_PAIR(8));    
+        attroff(COLOR_PAIR(8));
         attroff(A_BOLD);
     }
-    
+
     if(i <= num_of_services && modus == ALL)
     {
         if(strlen(services[i].unit) >= XLOAD -3)
-        {     
+        {
             char short_unit[XLOAD - 2];
             strncpy(short_unit, services[i].unit, XLOAD - 2);
-            
+
             mvaddstr(row + 4, 1, short_unit);
             mvaddstr(row + 4,XLOAD - 4, "...");
         }
         else
             mvaddstr(row + 4, 1, services[i].unit);
-        
+
         mvaddstr(row + 4, XLOAD, services[i].load);
         mvaddstr(row + 4, XACTIVE, services[i].active);
         mvaddstr(row + 4, XSUB, services[i].sub);
@@ -1269,14 +1269,14 @@ void print_s(int i, int row)
             mvaddstr(row + 4, XDESCRIPTION + maxx_description - 3, "...");
         }
         else
-            mvaddstr(row + 4, XDESCRIPTION, services[i].description);                   
+            mvaddstr(row + 4, XDESCRIPTION, services[i].description);
     } else if(i <= num_of_services && modus != ALL)
     {
         if(strlen(filtered_services[i].unit) >= XLOAD -3)
-        {     
+        {
             char short_unit[XLOAD - 2];
             strncpy(short_unit, filtered_services[i].unit, XLOAD - 2);
-            
+
             mvaddstr(row + 4, 1, short_unit);
             mvaddstr(row + 4,XLOAD - 4, "...");
         }
@@ -1308,9 +1308,9 @@ void print_s(int i, int row)
 void init_screen()
 {
     initscr();
-    
+
     getmaxyx(stdscr, maxy, maxx);
-   
+
     maxx_description = maxx - XDESCRIPTION - 1;
 
     raw();
@@ -1350,18 +1350,18 @@ void print_services()
     int max_rows = maxy - 5;
     int row = 0;
     int i = index_start;
-    
+
     i = index_start;
-    
+
     while(row < max_rows && i < num_of_services)
     {
         if(i < MAX_SERVICES)
         {
             switch(modus)
             {
-                case ALL:               
+                case ALL:
                 print_s(i, row);
-                row++; 
+                row++;
                 break;
                 case DEVICE:
                     print_s(i, row);
@@ -1410,13 +1410,13 @@ void print_services()
                 case SNAPSHOT:
                     print_s(i, row);
                     row++;
-                break;                
+                break;
                 default:
                 continue;
             }
            i++;
         }
-    }  
+    }
 }
 
 /**
@@ -1426,20 +1426,20 @@ void print_services()
  */
 void print_text_and_lines()
 {
-    int x = XLOAD / 2 - 10;    
+    int x = XLOAD / 2 - 10;
     char *headline = "ServiceMaster V1.2 | Q/ESC:Quit";
     char *functions = "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD";
     char *types = "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT";
-    
+
     attroff(COLOR_PAIR(9));
     border(0, 0, 0, 0, 0, 0, 0, 0);
 
     attron(A_BOLD);
-    attron(COLOR_PAIR(0));    
+    attron(COLOR_PAIR(0));
     mvaddstr(1, 1, headline);
     attroff(COLOR_PAIR(8));
 
-    attron(COLOR_PAIR(9));        
+    attron(COLOR_PAIR(9));
     mvaddstr(1, strlen(headline) + 2, functions);
     attroff(COLOR_PAIR(9));
 
@@ -1447,9 +1447,9 @@ void print_text_and_lines()
     mvaddstr(1, strlen(headline) + strlen(functions) + 3, types);
     attroff(COLOR_PAIR(10));
 
-    mvprintw(2, XLOAD - 10, "Pos.:%3d", position + index_start);    
+    mvprintw(2, XLOAD - 10, "Pos.:%3d", position + index_start);
     mvprintw(2, 1, "UNIT:");
-    
+
     attron(COLOR_PAIR(4));
     if(is_system)
         mvprintw(2, 7, "(SYSTEM)");
@@ -1461,51 +1461,51 @@ void print_text_and_lines()
     mvprintw(2, XLOAD, "LOAD:");
     mvprintw(2, XACTIVE, "ACTIVE:");
     mvprintw(2, XSUB, "SUB:");
-    mvprintw(2, XDESCRIPTION, "DESCRIPTION: | Left/Right: Modus | Up/Down: Select | Return: Show status");        
+    mvprintw(2, XDESCRIPTION, "DESCRIPTION: | Left/Right: Modus | Up/Down: Select | Return: Show status");
 
     attron(COLOR_PAIR(4));
     attron(A_UNDERLINE);
     switch(modus)
-    {        
+    {
         case ALL:
             mvprintw(2, x, "Total: %d", num_of_services);
-            break;           
+            break;
         case DEVICE:
             mvprintw(2, x, "Devices: %d", total_types.devices);
-            break;            
+            break;
         case SLICE:
             mvprintw(2, x, "Slices: %d", total_types.slices);
-            break;            
+            break;
         case SERVICE:
             mvprintw(2, x, "Services: %3d", total_types.services);
-            break;            
+            break;
         case SOCKET:
             mvprintw(2, x, "Sockets: %d", total_types.sockets);
-            break;            
+            break;
         case TARGET:
             mvprintw(2, x, "Targets: %d", total_types.targets);
-            break;            
+            break;
         case TIMER:
             mvprintw(2, x, "Timers: %d", total_types.timers);
-            break;            
+            break;
         case MOUNT:
-            mvprintw(2, x, "Mounts: %d", total_types.mounts);            
+            mvprintw(2, x, "Mounts: %d", total_types.mounts);
             break;
         case SCOPE:
             mvprintw(2, x, "Scopes: %d", total_types.scopes);
-            break;            
+            break;
         case AUTOMOUNT:
             mvprintw(2, x, "AutoMounts: %d", total_types.automounts);
             break;
         case SWAP:
             mvprintw(2, x, "Swaps: %d", total_types.swaps);
-            break;                        
+            break;
         case PATH:
             mvprintw(2, x, "Paths: %d", total_types.paths);
-            break;            
+            break;
         case SNAPSHOT:
             mvprintw(2, x, "Snapshots: %d", total_types.snapshots);
-            break;            
+            break;
         default:
             break;
     }
@@ -1518,7 +1518,7 @@ void print_text_and_lines()
     mvvline(2, XACTIVE -1, ACS_VLINE, maxy - 3);
     mvvline(2, XSUB -1, ACS_VLINE, maxy - 3);
     mvvline(2, XDESCRIPTION -1, ACS_VLINE, maxy - 3);
-    refresh();  
+    refresh();
 }
 
 /**
@@ -1531,7 +1531,7 @@ void print_text_and_lines()
  * - Clearing the display to prepare for the updated service list
  */
 void reload_all(void)
-{    
+{
     delete_all_services();
     num_of_services = get_all_systemd_services();
     filter_services();
@@ -1557,6 +1557,7 @@ void wait_input()
     char *status = NULL;
 
     int c;
+    int page_scroll = maxy - 6;
 
     while (1)
     {
@@ -1585,6 +1586,18 @@ void wait_input()
                     clear();
                 }
                 break;
+            case KEY_PPAGE: // Page Up
+                if (index_start > 0)
+                {
+                    index_start -= page_scroll;
+                    if (index_start < 0)
+                    {
+                        index_start = 0;
+                    }
+                    clear();
+                }
+                position = 0;
+                break;
             case KEY_DOWN:
                 if (position < maxy - 6 && index_start + position < max_services - 1)
                 {
@@ -1593,6 +1606,14 @@ void wait_input()
                 else if (index_start + position < max_services - 1)
                 {
                     index_start++;
+                    clear();
+                }
+                break;
+            case KEY_NPAGE: // Page Down
+                if (index_start < max_services - page_scroll)
+                {
+                    index_start += page_scroll;
+                    position = maxy - 6;
                     clear();
                 }
                 break;
@@ -1618,9 +1639,9 @@ void wait_input()
                 break;
             case KEY_SPACE:
                 if(is_system && is_root())
-                {                    
+                {
                     show_status_window(" Start Servicemaster as user to manipulate user units.", "You are now running as root !");
-                    break;                   
+                    break;
                 }
                 else if(is_system && !is_root())
                 {
@@ -1632,7 +1653,7 @@ void wait_input()
                 }
                 reload_all();
                 break;
-            case KEY_RETURN:                           
+            case KEY_RETURN:
                 clear();
                 if(modus == ALL && position >= 0 && strlen(services[position + index_start].unit) > 1)
                 {
@@ -1643,7 +1664,7 @@ void wait_input()
                 {
                     status = get_status_info(&filtered_services[position + index_start]);
                     if(status != NULL)
-                        show_status_window(status, "Status:");                    
+                        show_status_window(status, "Status:");
                 }
                 if(status != NULL)
                     free(status);
@@ -1920,17 +1941,17 @@ void wait_input()
             case KEY_ESC:
                 quit();
                 return;
-            default:               
+            default:
                 continue;
         }
-       
+
         if(index_start < 0) {
             index_start = 0;
         }
 
         if(position < 0) {
             position = 0;
-        }   
+        }
 
         if (index_start + position >= max_services) {
             if (max_services > maxy - 6) {
@@ -1940,7 +1961,7 @@ void wait_input()
                 index_start = 0;
                 position = max_services - 1;
             }
-        }       
+        }
         print_text_and_lines();
         print_services();
     }
@@ -1960,13 +1981,13 @@ int main()
         is_system = true;
     else
         is_system = false;
-    
+
     modus = SERVICE;
-    position = 0;  
-    index_start = 0;     
-    
+    position = 0;
+    index_start = 0;
+
     init_screen();
-    
+
     num_of_services = get_all_systemd_services();
     if (num_of_services < 0) {
         endwin();
@@ -1975,12 +1996,12 @@ int main()
      if (centered_intro != NULL) {
         show_status_window(center(introduction), intro_title);
         free(centered_intro);
-    }   
+    }
 
     filter_services();
 
     print_text_and_lines();
-    
+
     print_services();
 
     wait_input();
