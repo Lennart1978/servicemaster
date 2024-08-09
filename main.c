@@ -387,7 +387,7 @@ void show_status_window(const char *status, const char *title) {
 
     wattron(win, A_BOLD);
     wattron(win, A_UNDERLINE);
-    
+  
     mvwprintw(win, 0, (width / 2) - (strlen(title) / 2), "%s", title);
     wattroff(win, A_UNDERLINE);
 
@@ -437,7 +437,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     sd_bus_message *reply = NULL, *m = NULL;
     sd_bus *bus = NULL;
     const char *method = NULL;
-    int r;
+    int r
 
     if (unit == NULL) {
         return false;
@@ -496,8 +496,7 @@ bool start_operation(const char* unit, enum Operations operation) {
                                "ss", unit, "replace");
         if (r < 0)
             goto finish;
-    }
-
+      
 finish:
     sd_bus_error_free(&error);
     sd_bus_message_unref(m);
@@ -945,6 +944,15 @@ fin:
     return out;
 }
 
+Service * service_from_path(const char *path)
+{
+    for (int i=0; i < num_of_services; i++) {
+        if (strcmp(services[i].object, path) == 0)
+            return &services[i];
+    }
+    return NULL;
+}
+
 /**
  * Compares two Service structs based on the unit field in a case-insensitive manner.
  *
@@ -1150,6 +1158,164 @@ fin:
 }
 #pragma GCC diagnostic pop
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+int remove_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    int  rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Remove unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+        fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+        exit(EXIT_FAILURE);
+    }
+
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int add_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    char *name = NULL;
+    char *object = NULL;
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Add unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    rc = sd_bus_message_read(reply, "so", &name, &object);
+    if (rc < 0) {
+        endwin();
+        fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+        exit(EXIT_FAILURE);
+    }
+
+    sd_bus_error_free(err);
+    return 0;
+}
+
+int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    Service *svc;
+    int changed = 0;
+    const char *iface = NULL;
+    const char *path = NULL;
+    int rc;
+
+    if (sd_bus_error_is_set(err)) {
+        endwin();
+        fprintf(stderr, "Changed unit callback failed: %s\n", err->message);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Interface name */
+    rc = sd_bus_message_read(reply, "s", &iface);
+    if (rc < 0) {
+        endwin();
+        fprintf(stderr, "Cannot read dbus messge: %s\n", strerror(-rc));
+        exit(EXIT_FAILURE);
+    }
+
+    path = sd_bus_message_get_path(reply);
+    svc = service_from_path(path);
+
+    /* If no matching object, give up */
+    if (!svc) 
+        goto fin;
+
+    /* If the interface is not a unit, we dont care */
+    if (strcmp(iface, SD_IFACE("Unit")) != 0) 
+        goto fin;
+    
+    rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
+    if (rc < 0) {
+        endwin();
+        fprintf(stderr, "Cannot read array in dbus message: %s\n", strerror(-rc));
+        exit(EXIT_FAILURE);
+    }
+
+    /* Array of dictionaries */
+    while (true) {
+        const char *k;
+        const char *v;
+        rc = sd_bus_message_enter_container(reply, 'e', "sv");
+        if (rc < 0) {
+            endwin();
+            fprintf(stderr, "Cannot read dict item in dbus message: %s\n", strerror(-rc));
+            exit(EXIT_FAILURE);
+        }
+
+        /* No more array entries to read */
+        if (rc == 0)
+            break; 
+
+        /* Next item is the key out of the dictionary */
+        rc = sd_bus_message_read(reply, "s", &k);
+        if (rc < 0) {
+            endwin();
+            fprintf(stderr, "Cannot read dictionary key item from array: %s\n", strerror(-rc));
+            exit(EXIT_FAILURE);
+        }
+
+        /* If the property we want to measure, update the related property */
+        if (strcmp(k, "ActiveState") == 0) {
+            rc = sd_bus_message_read(reply, "v", "s", &v);
+            if (rc < 0) {
+                endwin();
+                fprintf(stderr, "Cannot fetch value from dictionary: %s\n", strerror(-rc));
+                exit(EXIT_FAILURE);
+            }
+             
+            strncpy(svc->active, v, CHARS_ACTIVE);
+            changed++;
+        }
+        else if (strcmp(k, "SubState") == 0) {
+            rc = sd_bus_message_read(reply, "v", "s", &v);
+            if (rc < 0) {
+                endwin();
+                fprintf(stderr, "Cannot fetch value from dictionary: %s\n", strerror(-rc));
+                exit(EXIT_FAILURE);
+            }
+
+            strncpy(svc->sub, v, CHARS_SUB);
+            changed++;
+        }
+        else
+          sd_bus_message_skip(reply, NULL);
+
+        if (sd_bus_message_exit_container(reply) < 0) {
+            endwin();
+            fprintf(stderr, "Cannot exit dictionary: %s\n", strerror(-rc));
+            exit(EXIT_FAILURE);
+        }            
+    }
+
+    sd_bus_message_exit_container(reply);
+
+    /* Redraw screen if something changed */
+    if (changed) {
+        filter_services();
+        print_services();
+        refresh();
+    }
+fin:
+    sd_bus_error_free(err);
+    return 0;
+}
+#pragma GCC diagnostic pop
+
 /**
  * Retrieves a list of all systemd services on the system.
  *
@@ -1211,6 +1377,7 @@ int get_all_systemd_services(bool is_system) {
 	if (r < 0)
             FAIL("Cannot read DBUS message to get system services: %s\n", strerror(-r));
 
+
 	if (r == 0)
 	  break;
 
@@ -1251,13 +1418,10 @@ int get_all_systemd_services(bool is_system) {
                                 "PropertiesChanged",
                                 changed_unit,
                                 (void *)svc);
-        if (r < 0) {
-            endwin();
-            fprintf(stderr, "Cannot register interest changed units: %s\n", strerror(-r));
-            exit(EXIT_FAILURE);
-        }
-
-	service_insert(svc, is_system);
+        if (r < 0)
+            FAIL("Cannot register interest changed units: %s\n", strerror(-r));
+      
+        service_insert(svc, is_system);
     }
 
     sd_bus_message_exit_container(reply);
@@ -1308,7 +1472,7 @@ int print_s(Service *svc, int row)
 
     if (modus != ALL && modus != svc->type)
         return 0;
-
+  
     if(strlen(svc->unit) >= XLOAD -3) {     
         char short_unit[XLOAD - 2];
         strncpy(short_unit, svc->unit, XLOAD - 2);
@@ -1593,11 +1757,11 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                     is_system = false;
                 else
                     is_system = true;
-		clear();
+                clear();
                 break;
 
-	    case KEY_RETURN:
-		svc = service_nth(position + index_start);
+	        case KEY_RETURN:
+                svc = service_nth(position + index_start);
                 clear();
                 if(position < 0)
                     break;
@@ -1628,10 +1792,6 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
             case KEY_F(6):
                 SD_OPERATION(MASK, "Mask");
-                break;
-
-            case KEY_F(7):
-                SD_OPERATION(UNMASK, "Unmask");
                 break;
 
             case KEY_F(8):
@@ -1719,19 +1879,23 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
     return 0;
 }
-#undef NO_STATUS
-#undef SD_OPERATION
-#undef MODE
 #pragma GCC diagnostic pop
 
 /* Configures initial dbus needed for long running systemd event handling */
-void setup_dbus(sd_bus *bus)
+void setup_dbus()
 {
     sd_event *ev = NULL;
+    sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
     int rc = -1;
 
-    /* Ref the bus once, this ensures it stays open. */
+    /* Initialize and ref the bus once, this ensures it stays open. */
+    rc = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (rc < 0) {
+        endwin();
+        fprintf(stderr, "Cannot open %s dbus: %s\n", is_system ? "system" : "user", strerror(-rc));
+        exit(EXIT_FAILURE);
+    }
     sd_bus_ref(bus);
 
     /* Now subscribe to events in systemd */
@@ -1802,6 +1966,7 @@ int main()
         is_system = false;
 
     modus = SERVICE;
+
     position = 0;  
     index_start = 0;
     
