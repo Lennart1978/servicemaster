@@ -1,4 +1,5 @@
 #include <ncurses.h>
+#include <systemd/sd-event.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-journal.h>
 #include <stdio.h>
@@ -308,7 +309,7 @@ bool daemon_reload() {
     const char *method = "Reload";
     int r;
 
-    r = is_system ? sd_bus_open_system(&bus) : sd_bus_open_user(&bus);
+    r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
     if (r < 0) {
         show_status_window(strerror(-r), "Can't connect to bus:");
         return false;
@@ -358,10 +359,9 @@ bool start_operation(const char* unit, enum Operations operation) {
         return false;
     }
 
-    r = is_system ? sd_bus_open_system(&bus) : sd_bus_open_user(&bus);
-    if (r < 0) {
+    r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (r < 0)
         return false;
-    }
 
     switch (operation) {
         case START:
@@ -823,14 +823,9 @@ char* get_status_info(Service *svc) {
     char *logs = NULL;
     int r;
 
-    if (is_system)
-        r = sd_bus_open_system(&bus);
-    else
-        r = sd_bus_open_user(&bus);
-
-    if (r < 0) {
+    r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (r < 0)
         goto fin;
-    }
 
     if (invocation_id(bus, svc) == false)
         goto fin;
@@ -1097,15 +1092,9 @@ int get_all_systemd_services() {
     sd_bus_message *reply = NULL;
     int r, i = 0;
 
-    if (is_system) {
-        r = sd_bus_open_system(&bus);
-    } else {
-        r = sd_bus_open_user(&bus);
-    }
-
-    if (r < 0) {
+    r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (r < 0)
         return 0;
-    }
 
     r = sd_bus_call_method(bus,
                            SD_DESTINATION,
@@ -1311,13 +1300,11 @@ void init_screen()
 
     getmaxyx(stdscr, maxy, maxx);
 
-    maxx_description = maxx - XDESCRIPTION - 1;
-
     raw();
     noecho();
     curs_set(0);
     keypad(stdscr, TRUE);
-    nodelay(stdscr, FALSE);
+    nodelay(stdscr, TRUE);
     start_color();
     init_pair(0, COLOR_BLACK, COLOR_WHITE);
     init_pair(1, COLOR_CYAN, COLOR_BLACK);
@@ -1548,6 +1535,38 @@ void reload_all(void)
  */
 void wait_input()
 {
+    int rc;
+    sd_event *ev = NULL;
+
+    rc = sd_event_default(&ev);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot fetch default event handler: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    rc = sd_event_loop(ev);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot run even loop: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    return;
+}
+
+/**
+ * Handles user input and performs various operations on systemd services.
+ * This function is responsible for:
+ * - Handling user input from the keyboard, including navigation, service operations, and mode changes
+ * - Updating the display based on the current state and user actions
+ * - Calling appropriate functions to perform service operations (start, stop, restart, etc.)
+ * - Reloading the service list when necessary
+*/
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
+{
     enum Operations op;
     bool success = false;
     char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
@@ -1559,10 +1578,19 @@ void wait_input()
     int c;
     int page_scroll = maxy - 6;
 
-    while (1)
+    if ((revents & (EPOLLHUP|EPOLLERR|EPOLLRDHUP)) > 0) {
+        endwin();
+	fprintf(stderr, "Error handling input: %s\n", strerror(errno));
+	exit(EXIT_FAILURE);
+    }
+
+    while ((c = getch()))
     {
-        c = getch();
-        int max_services = 0;
+	int max_services = 0;
+
+	if (c == ERR)
+	    return 0;
+
         for(int i = 0; i < num_of_services; i++) {
             if(services[i].type == modus) {
                 max_services++;
@@ -1940,7 +1968,7 @@ void wait_input()
             case 'q':
             case KEY_ESC:
                 quit();
-                return;
+                return 0;
             default:
                 continue;
         }
@@ -1965,6 +1993,69 @@ void wait_input()
         print_text_and_lines();
         print_services();
     }
+
+    return 0;
+}
+#pragma GCC diagnostic pop
+/* Configures initial dbus needed for long running systemd event handling */
+void setup_dbus()
+{
+    sd_bus *bus = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    int rc = -1;
+
+    /* Initialize and ref the bus once, this ensures it stays open. */
+    rc = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (rc < 0) {
+	endwin();
+        fprintf(stderr, "Cannot open %s dbus: %s\n", is_system ? "system" : "user", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+    sd_bus_ref(bus);
+
+    /* Now subscribe to events in systemd */
+    rc = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "Subscribe", &error, NULL, NULL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot subcribe to systemd dbus events: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    if (sd_bus_error_is_set(&error)) {
+        endwin();
+	fprintf(stderr, "Cannot subcribe to systemd dbus events: %s\n", error.message);
+	exit(EXIT_FAILURE);
+    }
+
+    sd_bus_error_free(&error);
+}
+
+/* Initializes the event loop and sets up the handlers for
+ * recieving input */
+void setup_event_loop()
+{
+    int rc = -1;
+    sd_event *ev = NULL;
+
+    rc = sd_event_default(&ev);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot initialize event loop: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
+    rc = sd_event_add_io(ev,
+                         NULL,
+                         STDIN_FILENO,
+                         EPOLLIN,
+			 key_pressed,
+			 NULL);
+    if (rc < 0) {
+        endwin();
+	fprintf(stderr, "Cannot initialize event handler: %s\n", strerror(-rc));
+	exit(EXIT_FAILURE);
+    }
+
 }
 
 /**
@@ -1983,9 +2074,9 @@ int main()
         is_system = false;
 
     modus = SERVICE;
-    position = 0;
+    position = 0;  
     index_start = 0;
-
+    
     init_screen();
 
     num_of_services = get_all_systemd_services();
@@ -2004,6 +2095,10 @@ int main()
 
     print_services();
 
+    setup_event_loop();
+    setup_dbus();
+
+    refresh();
     wait_input();
 
     endwin();
