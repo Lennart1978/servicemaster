@@ -11,15 +11,25 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/queue.h>
+
+#define FUNCTIONS     "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
+#define SERVICE_TYPES "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT"
 
 #define SD_DESTINATION "org.freedesktop.systemd1"
 #define SD_IFACE(x)    "org.freedesktop.systemd1." x
 #define SD_OPATH       "/org/freedesktop/systemd1"
+#define FAIL(...) {\
+    endwin();\
+    fprintf(stderr, __VA_ARGS__);\
+    exit(EXIT_FAILURE);\
+}
+
+#define PAGE_SCROLL (maxy - 6)
 
 #define KEY_RETURN 10
 #define KEY_ESC 27
 #define KEY_SPACE 32
-#define MAX_SERVICES 8000
 #define XLOAD 104
 #define XACTIVE 114
 #define XSUB 124
@@ -35,6 +45,8 @@
 #define INVOCATION_SZ 33
 
 void print_services();
+void print_text_and_lines();
+int get_all_systemd_services(bool system);
 
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information. Use left/right to toggle modes and up/down"
@@ -46,7 +58,7 @@ const char *introduction = "Press Space to switch between system and user system
 
 const char *intro_title = "A quick introduction to ServiceMaster:";
 
-int maxx, maxy, position, num_of_services, index_start;
+int maxx, maxy, position, index_start;
 size_t maxx_description;
 bool is_system = false;
 
@@ -59,6 +71,7 @@ enum Operations {
     MASK,
     UNMASK,
     RELOAD,
+    MAX_OPERATIONS
 };
 
 enum Type {
@@ -75,12 +88,39 @@ enum Type {
     SWAP,
     PATH,
     SNAPSHOT,
+    MAX_TYPES
 };
 
-enum Type modus;
+const char * str_types[] = {
+    "all",
+    "device",
+    "slice",
+    "service",
+    "socket",
+    "target",
+    "timer",
+    "mount",
+    "scope",
+    "automount",
+    "swap",
+    "path",
+    "snapshot"
+};
 
-typedef struct {
-    int index;
+const char *str_operations[] = {
+    "StartUnit",
+    "StopUnit",
+    "RestartUnit",
+    "EnableUnitFiles",
+    "DisableUnitFiles",
+    "MaskUnitFiles",
+    "UnmaskUnitFiles",
+    "ReloadUnit"
+};
+
+typedef struct Service {
+    int ypos;
+
     char unit[CHARS_UNIT];
     char load[CHARS_LOAD];
     char active[CHARS_ACTIVE];
@@ -103,37 +143,121 @@ typedef struct {
     uint64_t zswap_peak;
     uint64_t cpu_usage;
     char cgroup[UNIT_PROPERTY_SZ];
-
-    char sysfs_path[UNIT_PROPERTY_SZ];  // For DEVICE
-    char mount_where[UNIT_PROPERTY_SZ]; // For MOUNT
-    char mount_what[UNIT_PROPERTY_SZ];  // For MOUNT
-    uint64_t next_elapse;               // For TIMER
+    
+    char sysfs_path[UNIT_PROPERTY_SZ];     // For DEVICE
+    char mount_where[UNIT_PROPERTY_SZ];    // For MOUNT
+    char mount_what[UNIT_PROPERTY_SZ];     // For MOUNT
+    uint64_t next_elapse;                  // For TIMER
     char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
-    uint32_t backlog;                   // For SOCKET
-
+    uint32_t backlog;                      // For SOCKET
+    
     enum Type type;
     sd_bus_slot *slot;
+
+    TAILQ_ENTRY(Service) e;
 } Service;
 
-Service services[MAX_SERVICES];
-Service filtered_services[MAX_SERVICES];
+TAILQ_HEAD(service_list, Service);
 
-typedef struct {
-    int devices;
-    int slices;
-    int services;
-    int sockets;
-    int targets;
-    int timers;
-    int mounts;
-    int scopes;
-    int automounts;
-    int swaps;
-    int paths;
-    int snapshots;
-} Total;
+struct service_list system_services = TAILQ_HEAD_INITIALIZER(system_services);
+struct service_list user_services = TAILQ_HEAD_INITIALIZER(user_services);
 
-Total total_types;
+int total_user_types[MAX_TYPES];
+int total_system_types[MAX_TYPES];
+
+enum Type modus;
+
+
+
+
+
+
+
+static inline Service * service_init(void) {
+    Service *svc = NULL;
+    svc = calloc(1, sizeof(Service));
+
+    return svc;
+}
+
+
+/* Return the nth service in the list, accounting for the enabled
+ * filter */
+static inline Service * service_nth(int n) {
+    int i=0;
+    Service *svc;
+    struct service_list *list = NULL;
+    list = is_system ? &system_services: &user_services;
+
+    TAILQ_FOREACH(svc, list, e) {
+        if (i == n)
+            return svc;
+	if (svc->type == modus || modus == ALL)
+            i++;
+    }
+
+    return TAILQ_FIRST(list);
+}
+
+
+/* Insert service into the list in a sorted order */
+static inline void service_insert(Service *svc, bool is_system) {
+    int *total_types = NULL;
+    struct service_list *list = NULL;
+    Service *node = NULL;
+
+    list = is_system ? &system_services : &user_services;
+    total_types = is_system ? total_system_types : total_user_types;
+    total_types[svc->type]++;
+    total_types[ALL]++;
+
+    /* List is empty, add to the head of the list */
+    if (TAILQ_EMPTY(list)) {
+        TAILQ_INSERT_HEAD(list, svc, e);
+        return;
+    }
+
+    /* Find the next entry lexicographically above us and insert */
+    TAILQ_FOREACH(node, list, e) {
+        if (strcmp(svc->object, node->object) > 0)
+            continue;
+
+	TAILQ_INSERT_BEFORE(node, svc, e);
+	return;
+    }
+
+    /* This item is the lexicographically greatest, put in tail */
+    TAILQ_INSERT_TAIL(list, svc, e);
+}
+
+static inline void services_empty(void)
+{
+    struct service_list *list = NULL;
+    Service *svc = NULL;
+
+    list = is_system ? &system_services: &user_services;
+
+    while (!TAILQ_EMPTY(list)) {
+        svc = TAILQ_FIRST(list);
+        TAILQ_REMOVE(list, svc, e);
+	sd_bus_slot_unref(svc->slot);
+	free(svc);
+    }
+}
+
+/* This is used during the print services routine
+ * to reset the y positions on all services, since not
+ * every service is displayed at once. */
+static inline void services_invalidate_ypos(void) {
+    struct service_list *list = NULL;
+    Service *svc = NULL;
+
+    list = is_system ? &system_services : &user_services;
+    TAILQ_FOREACH(svc, list, e) {
+        svc->ypos = -1;
+    }
+}
+
 
 /**
  * Centers the given text by adding spaces to the beginning and end of each line to make the text centered.
@@ -263,7 +387,7 @@ void show_status_window(const char *status, const char *title) {
 
     wattron(win, A_BOLD);
     wattron(win, A_UNDERLINE);
-
+  
     mvwprintw(win, 0, (width / 2) - (strlen(title) / 2), "%s", title);
     wattroff(win, A_UNDERLINE);
 
@@ -294,42 +418,6 @@ void show_status_window(const char *status, const char *title) {
 }
 
 /**
- * Reload the systemd daemon.
- *
- * This function connects to the D-Bus system or user bus, depending on the value of the `is_system` global variable,
- * and calls the `Reload` method on the `org.freedesktop.systemd1.Manager` interface of the `org.freedesktop.systemd1` service at the `/org/freedesktop/systemd1` object path.
- *
- * If the operation is successful, the function returns `true`.
- * If there is an error, the function displays an error message using the `show_status_window` function and returns `false`.
- *
- * @return `true` if the daemon was reloaded successfully, `false` otherwise.
- */
-bool daemon_reload() {
-    sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus *bus = NULL;
-    const char *method = "Reload";
-    int r;
-
-    r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
-    if (r < 0) {
-        show_status_window(strerror(-r), "Can't connect to bus:");
-        return false;
-    }
-
-    r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, NULL, NULL);
-    if (r < 0) {
-        char status_message[256];
-        snprintf(status_message, sizeof(status_message), "Failed to reload daemon: %s", error.message);
-        show_status_window(status_message, "D-Bus Error:");
-        sd_bus_error_free(&error);
-        sd_bus_unref(bus);
-        return false;
-    }
-    sd_bus_unref(bus);
-    return true;
-}
-
-/**
  * Perform a systemd operation on a given unit.
  *
  * This function connects to the D-Bus system or user bus, depending on the value of the `is_system` global variable,
@@ -349,7 +437,7 @@ bool start_operation(const char* unit, enum Operations operation) {
     sd_bus_message *reply = NULL, *m = NULL;
     sd_bus *bus = NULL;
     const char *method = NULL;
-    int r;
+    int r
 
     if (unit == NULL) {
         return false;
@@ -364,91 +452,51 @@ bool start_operation(const char* unit, enum Operations operation) {
     if (r < 0)
         return false;
 
-    switch (operation) {
-        case START:
-            method = "StartUnit";
-            break;
-        case STOP:
-            method = "StopUnit";
-            break;
-        case RESTART:
-            method = "RestartUnit";
-            break;
-        case ENABLE:
-            method = "EnableUnitFiles";
-            break;
-        case DISABLE:
-            method = "DisableUnitFiles";
-            break;
-        case MASK:
-            method = "MaskUnitFiles";
-            break;
-        case UNMASK:
-            method = "UnmaskUnitFiles";
-            break;
-        case RELOAD:
-            method = "ReloadUnit";
-            break;
-        default:
-            sd_bus_unref(bus);
-            show_status_window("Invalid operation", "Error:");
-            return false;
+    if (operation < START || operation >= MAX_OPERATIONS) {
+        sd_bus_unref(bus);
+	show_status_window("Invalid operation", "Error:");
+	return false;
     }
+    method = str_operations[operation];
 
     if (strcmp(method, "EnableUnitFiles") == 0 || strcmp(method, "MaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {
+        if (r < 0) 
             goto finish;
-        }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
 
         r = sd_bus_message_append(m, "bb", false, true);
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {
+        if (r < 1)
             goto finish;
-        }
+        
     } else if (strcmp(method, "DisableUnitFiles") == 0 || strcmp(method, "UnmaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) {
             goto finish;
-        }
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
 
         r = sd_bus_message_append(m, "b", false);
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
 
         r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
     } else {
         r = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method, &error, &reply,
                                "ss", unit, "replace");
-        if (r < 0) {
+        if (r < 0)
             goto finish;
-        }
-    }
-
-    /*
-    if (!daemon_reload()) {
-        show_status_window("Failed to reload daemon after operation", "Warning:");
-    }
-    */
-
+      
 finish:
     sd_bus_error_free(&error);
     sd_bus_message_unref(m);
@@ -623,7 +671,7 @@ char* format_unit_status(Service *svc) {
         case SNAPSHOT:
             break;
 
-        case ALL:
+        default:
             break;
     }
 
@@ -873,7 +921,7 @@ char* get_status_info(Service *svc) {
         case SWAP:
         case SNAPSHOT:
             break;
-        case ALL:
+	default:
             break;
     }
 
@@ -922,22 +970,6 @@ int compare_services(const void* a, const void* b)
 }
 
 /**
- * Sorts the provided array of Service structs in ascending order based on the unit field,
- * and assigns each Service struct an index value corresponding to its position in the sorted array.
- *
- * @param services The array of Service structs to be sorted.
- * @param num_services The number of Service structs in the array.
- */
-void sort_units_services(Service* services, int num_services) {
-
-    qsort(services, num_services, sizeof(Service), compare_services);
-
-    for (int i = 0; i < num_services; i++) {
-        services[i].index = i;
-    }
-}
-
-/**
  * Checks if the given unit string has the specified file extension.
  *
  * @param unit The unit string to check.
@@ -960,112 +992,6 @@ int test_unit_extension(const char* unit, const char* extension)
 }
 
 /**
- * Filters the services array to only include those of the specified type,
- * and then sorts the filtered array in ascending order based on the unit field.
- *
- * @param modus The type of services to include in the filtered array.
- */
-void filter_services()
-{
-    int i, k = 0;
-
-    for(i = 0; i < num_of_services; i++)
-    {
-        filtered_services[i].unit[0] = '\0';
-        filtered_services[i].load[0] = '\0';
-        filtered_services[i].active[0] = '\0';
-        filtered_services[i].sub[0] = '\0';
-        filtered_services[i].description[0] = '\0';
-        filtered_services[i].index = 0;
-        filtered_services[i].cgroup[0] = '\0';
-        filtered_services[i].exec_main_start = 0;
-        filtered_services[i].main_pid = 0;
-        filtered_services[i].tasks_current = 0;
-        filtered_services[i].tasks_max = 0;
-        filtered_services[i].memory_current = 0;
-        filtered_services[i].memory_peak = 0;
-        filtered_services[i].swap_current = 0;
-        filtered_services[i].swap_peak = 0;
-        filtered_services[i].zswap_current = 0;
-        filtered_services[i].zswap_peak = 0;
-        filtered_services[i].cpu_usage = 0;
-        filtered_services[i].type = 0;
-        filtered_services[i].object[0] = '\0';
-        filtered_services[i].fragment_path[0] = '\0';
-        filtered_services[i].unit_file_state[0] = '\0';
-        filtered_services[i].invocation_id[0] = '\0';
-    }
-
-    for(i = 0; i < num_of_services; i++)
-    {
-        if(services[i].type == modus)
-        {
-            filtered_services[k] = services[i];
-            k++;
-        }
-    }
-    sort_units_services(filtered_services, k);
-}
-
-/**
- * Deletes all services by resetting the service-related fields and counters.
- * This function is used to clear the list of services before repopulating it.
- */
-void delete_all_services()
-{
-    int i;
-    for(i = 0; i < num_of_services; i++)
-    {
-        services[i].unit[0] = '\0';
-        services[i].load[0] = '\0';
-        services[i].active[0] = '\0';
-        services[i].sub[0] = '\0';
-        services[i].description[0] = '\0';
-        services[i].index = 0;
-        services[i].cgroup[0] = '\0';
-        services[i].exec_main_start = 0;
-        services[i].main_pid = 0;
-        services[i].tasks_current = 0;
-        services[i].tasks_max = 0;
-        services[i].memory_current = 0;
-        services[i].memory_peak = 0;
-        services[i].swap_current = 0;
-        services[i].swap_peak = 0;
-        services[i].zswap_current = 0;
-        services[i].zswap_peak = 0;
-        services[i].cpu_usage = 0;
-        services[i].type = 0;
-        services[i].object[0] = '\0';
-        services[i].fragment_path[0] = '\0';
-        services[i].unit_file_state[0] = '\0';
-        services[i].invocation_id[0] = '\0';
-        services[i].backlog = 0;
-        services[i].bind_ipv6_only[0] = '\0';
-        services[i].mount_where[0] = '\0';
-        services[i].mount_what[0] = '\0';
-        services[i].next_elapse = 0;
-        services[i].sysfs_path[0] = '\0';
-        services[i].tasks_current = 0;
-        services[i].tasks_max = 0;
-    }
-
-    num_of_services = 0;
-
-    total_types.devices = 0;
-    total_types.slices = 0;
-    total_types.services = 0;
-    total_types.sockets = 0;
-    total_types.targets = 0;
-    total_types.timers = 0;
-    total_types.mounts = 0;
-    total_types.scopes = 0;
-    total_types.automounts = 0;
-    total_types.swaps = 0;
-    total_types.paths = 0;
-    total_types.snapshots = 0;
-}
-
-/**
  * Checks if a given systemd unit type is considered "enableable", meaning it can be enabled or disabled.
  * The function checks the unit name against a list of known enableable unit types.
  *
@@ -1076,15 +1002,161 @@ bool is_enableable_unit_type(const char *unit) {
     static const char *enableable_extensions[] = {
         ".service", ".socket", ".timer", ".path", ".target", ".mount", ".automount"
     };
-    size_t unit_len = strlen(unit);
+
     for (size_t i = 0; i < sizeof(enableable_extensions) / sizeof(enableable_extensions[0]); i++) {
-        size_t ext_len = strlen(enableable_extensions[i]);
-        if (unit_len > ext_len && strcmp(unit + unit_len - ext_len, enableable_extensions[i]) == 0) {
-            return true;
-        }
+        if (test_unit_extension(unit, enableable_extensions[i]))
+           return true;
     }
+
     return false;
 }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    int  rc, reload_started;
+    const char *scope;
+    bool system = false;
+    sd_bus *bus;
+
+    if (sd_bus_error_is_set(err)) 
+        FAIL("Remove unit callback failed: %s\n", err->message);
+
+    rc = sd_bus_message_read(reply, "b", &reload_started);
+    if (rc < 0) 
+        FAIL("Cannot read dbus messge: %s\n", strerror(-rc));
+
+    /* Reload daemon services for specific bus type and conditionally redraw screen) */
+    if (reload_started)
+        goto fin;
+
+    bus = sd_bus_message_get_bus(reply);
+    sd_bus_get_scope(bus, &scope);
+
+    if (strcmp(scope, "system") == 0)
+      system = true;
+
+    rc = get_all_systemd_services(system);
+    if (rc < 0)
+        FAIL("Cannot relaod system units: %s\n", strerror(-rc));
+    
+    if ((system && is_system) || (!system && !is_system)) {
+        clear();
+        print_text_and_lines();
+        print_services();
+        refresh();
+    }
+
+fin:
+    sd_bus_error_free(err);
+    return 0;
+}
+
+static int update_service_property(Service *svc, sd_bus_message *reply)
+{
+    /* Format of message at this point is: '{sv}' */
+    int rc;
+    const char *k, *str;
+
+    /* s: Next item is the key out of the dictionary */
+    rc = sd_bus_message_read(reply, "s", &k);
+    if (rc < 0)
+        FAIL("Cannot read dictionary key item from array: %s\n", strerror(-rc));
+
+    /* If its a property we want to measure, update the related property */
+    if (strcmp(k, "ActiveState") == 0) {
+        /* v: Variant, always a string in this case */
+        rc = sd_bus_message_read(reply, "v", "s", &str);
+        if (rc < 0)
+            FAIL("Cannot fetch value from dictionary: %s\n", strerror(-rc));
+        strncpy(svc->active, str, CHARS_ACTIVE);
+
+        return 1;
+    }
+
+    else if (strcmp(k, "SubState") == 0) {
+        /* v: Variant, always a string in this case */
+        rc = sd_bus_message_read(reply, "v", "s", &str);
+        if (rc < 0)
+            FAIL("Cannot fetch value from dictionary: %s\n", strerror(-rc));
+	strncpy(svc->sub, str, CHARS_SUB);
+
+        return 1;
+    }
+    else
+      /* Anything else is skipped */
+      sd_bus_message_skip(reply, NULL);
+
+    return 0;
+}
+
+int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
+{
+    Service *svc = (Service *)data;
+    int changed = 0;
+    const char *iface = NULL;
+    int rc;
+
+    /* Message format: sa{sv}as */
+
+    if (sd_bus_error_is_set(err)) 
+        FAIL("Changed unit callback failed: %s\n", err->message);
+
+    /* s: Interface name */
+    rc = sd_bus_message_read(reply, "s", &iface);
+    if (rc < 0) 
+        FAIL("Cannot read dbus messge: %s\n", strerror(-rc));
+
+    /* If the interface is not a unit, we dont care */
+    if (strcmp(iface, SD_IFACE("Unit")) != 0) 
+        goto fin;
+    
+    /* a: Array of dictionaries */
+    rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
+    if (rc < 0)
+        FAIL("Cannot read array in dbus message: %s\n", strerror(-rc));
+
+    /* Array of dictionaries */
+    while (true) {
+	/* {..}: Dictionary itself */
+        rc = sd_bus_message_enter_container(reply, 'e', "sv");
+        if (rc < 0) 
+            FAIL("Cannot read dict item in dbus message: %s\n", strerror(-rc));
+
+        /* No more array entries to read */
+        if (rc == 0)
+            break; 
+
+        changed += update_service_property(svc, reply);
+	/* If the service is on the screen, invalidate the row so it refreshes
+	 * correctly */
+	if (svc->ypos > -1) {
+            int x, y;
+            getyx(stdscr, y, x);
+            wmove(stdscr, svc->ypos, XLOAD);
+            wclrtoeol(stdscr);
+            wmove(stdscr, y, x);
+        }
+
+        if (sd_bus_message_exit_container(reply) < 0)
+            FAIL("Cannot exit dictionary: %s\n", strerror(-rc));
+    }
+
+    sd_bus_message_exit_container(reply);
+
+    /* Redraw screen if something changed */
+    if (changed) {
+        print_text_and_lines();
+        print_services();
+        refresh();
+    }
+
+fin:
+    sd_bus_error_free(err);
+    return 0;
+}
+#pragma GCC diagnostic pop
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -1256,15 +1328,21 @@ fin:
  *
  * @return The number of services retrieved, or -1 on error.
  */
-int get_all_systemd_services() {
+int get_all_systemd_services(bool is_system) {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;
-    int r, i = 0;
+    sd_bus_message *reply = NULL;    
+    int r = 0;
+    int *total_types = NULL;
+
+    total_types = is_system ? total_system_types : total_user_types;
 
     r = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
-    if (r < 0)
-        return 0;
+    if (r < 0) {
+      sd_bus_error_free(&error);
+      sd_bus_unref(bus);
+      return -1;
+    }
 
     r = sd_bus_call_method(bus,
                            SD_DESTINATION,
@@ -1287,98 +1365,73 @@ int get_all_systemd_services() {
         return -1;
     }
 
+    services_empty();
+
     const char *unit, *load, *active, *sub, *description, *object;
-    while ((r = sd_bus_message_read(reply, "(ssssssouso)",
-            &unit, &description, &load, &active, &sub,
-            NULL, &object, NULL, NULL, NULL)) > 0) {
+    while (true) {
+	Service *svc = NULL;
 
-        if (i < MAX_SERVICES) {
-            strncpy(services[i].unit, unit, sizeof(services[i].unit) - 1);
-            strncpy(services[i].load, load, sizeof(services[i].load) - 1);
-            strncpy(services[i].active, active, sizeof(services[i].active) - 1);
-            strncpy(services[i].sub, sub, sizeof(services[i].sub) - 1);
-            strncpy(services[i].description, description, sizeof(services[i].description) - 1);
-            strncpy(services[i].object, object, sizeof(services[i].object) - 1);
-            services[i].index = i;
+	r = sd_bus_message_read(reply, "(ssssssouso)", 
+                                &unit, &description, &load, &active, &sub,
+                                NULL, &object, NULL, NULL, NULL);
+	if (r < 0)
+            FAIL("Cannot read DBUS message to get system services: %s\n", strerror(-r));
 
-            if (test_unit_extension(services[i].unit, "service")) {
-                total_types.services++;
-                services[i].type = SERVICE;
-            } else if (test_unit_extension(services[i].unit, "device")) {
-                total_types.devices++;
-                services[i].type = DEVICE;
-            } else if (test_unit_extension(services[i].unit, "slice")) {
-                total_types.slices++;
-                services[i].type = SLICE;
-            } else if (test_unit_extension(services[i].unit, "socket")) {
-                total_types.sockets++;
-                services[i].type = SOCKET;
-            } else if (test_unit_extension(services[i].unit, "target")) {
-                total_types.targets++;
-                services[i].type = TARGET;
-            } else if (test_unit_extension(services[i].unit, "timer")) {
-                total_types.timers++;
-                services[i].type = TIMER;
-            } else if (test_unit_extension(services[i].unit, "mount")) {
-                total_types.mounts++;
-                services[i].type = MOUNT;
-            } else if (test_unit_extension(services[i].unit, "scope")) {
-                total_types.scopes++;
-                services[i].type = SCOPE;
-            } else if (test_unit_extension(services[i].unit, "automount")) {
-                total_types.automounts++;
-                services[i].type = AUTOMOUNT;
-            } else if (test_unit_extension(services[i].unit, "swap")) {
-                total_types.swaps++;
-                services[i].type = SWAP;
-            } else if (test_unit_extension(services[i].unit, "path")) {
-                total_types.paths++;
-                services[i].type = PATH;
-            } else if (test_unit_extension(services[i].unit, "snapshot")) {
-                total_types.snapshots++;
-                services[i].type = SNAPSHOT;
-            }
 
-            services[i].unit[sizeof(services[i].unit) - 1] = '\0';
-            services[i].load[sizeof(services[i].load) - 1] = '\0';
-            services[i].active[sizeof(services[i].active) - 1] = '\0';
-            services[i].sub[sizeof(services[i].sub) - 1] = '\0';
-            services[i].description[sizeof(services[i].description) - 1] = '\0';
+	if (r == 0)
+	  break;
 
-            /* Register interest in events on this object */
-            r = sd_bus_match_signal(bus, 
-                                    &services[i].slot,
-                                    SD_DESTINATION,
-                                    object,
-                                    "org.freedesktop.DBus.Properties",
-                                    "PropertiesChanged",
-                                    changed_unit,
-                                    NULL);
-            if (r < 0) {
-                endwin();
-                fprintf(stderr, "Cannot register interest changed units: %s\n", strerror(-r));
-                exit(EXIT_FAILURE);
-            }
+	svc = service_init();
+	if (!svc) {
+            sd_bus_error_free(&error);
+            sd_bus_unref(bus);
+            return -1;
+        }
+        
+        strncpy(svc->unit, unit, sizeof(svc->unit) - 1);
+        strncpy(svc->load, load, sizeof(svc->load) - 1);
+        strncpy(svc->active, active, sizeof(svc->active) - 1);
+        strncpy(svc->sub, sub, sizeof(svc->sub) - 1);
+        strncpy(svc->description, description, sizeof(svc->description) - 1);
+        strncpy(svc->object, object, sizeof(svc->object) - 1);
 
-            i++;
+        /* Sets the units type */
+        for (int j=0; j < MAX_TYPES; j++) {
+              if (test_unit_extension(svc->unit, str_types[j])) {
+                  svc->type = j;
+                  break;
+              }
         }
 
-        if (i >= MAX_SERVICES) {
-            break;
-        }
+        svc->unit[sizeof(svc->unit) - 1] = '\0';
+        svc->load[sizeof(svc->load) - 1] = '\0';
+        svc->active[sizeof(svc->active) - 1] = '\0';
+        svc->sub[sizeof(svc->sub) - 1] = '\0';
+        svc->description[sizeof(svc->description) - 1] = '\0';
+
+        /* Register interest in events on this object */
+        r = sd_bus_match_signal(bus, 
+                                &svc->slot,
+                                SD_DESTINATION,
+                                object,
+                                "org.freedesktop.DBus.Properties",
+                                "PropertiesChanged",
+                                changed_unit,
+                                (void *)svc);
+        if (r < 0)
+            FAIL("Cannot register interest changed units: %s\n", strerror(-r));
+      
+        service_insert(svc, is_system);
     }
 
     sd_bus_message_exit_container(reply);
     sd_bus_message_unref(reply);
     sd_bus_unref(bus);
-
-    sort_units_services(services, i);
-
-    return i;
+    return total_types[ALL];
 }
 
 /**
- * Clears the screen, ends the ncurses window, and exits the program with a status of 1.
+ * Clears the screen, ends the ncurses window, and exits the program with a status of 0.
  * This function should be called when the program needs to terminate, such as when the user
  * requests to quit the application.
  */
@@ -1387,7 +1440,7 @@ void quit()
     clear();
     endwin();
     printf("Thank you for using ServiceMaster, I hope you enjoyed it.\n");
-    exit(1);
+    exit(EXIT_SUCCESS);
 }
 
 /**
@@ -1404,7 +1457,7 @@ void quit()
  * @param i The index of the service to print.
  * @param row The row to print the service information on.
  */
-void print_s(int i, int row)
+int print_s(Service *svc, int row)
 {
     if(position == row)
     {
@@ -1417,61 +1470,33 @@ void print_s(int i, int row)
         attroff(A_BOLD);
     }
 
-    if(i <= num_of_services && modus == ALL)
-    {
-        if(strlen(services[i].unit) >= XLOAD -3)
-        {
-            char short_unit[XLOAD - 2];
-            strncpy(short_unit, services[i].unit, XLOAD - 2);
-
-            mvaddstr(row + 4, 1, short_unit);
-            mvaddstr(row + 4,XLOAD - 4, "...");
-        }
-        else
-            mvaddstr(row + 4, 1, services[i].unit);        
-
-        mvprintw(row + 4, XLOAD, "%s", services[i].load);
-        mvprintw(row + 4, XACTIVE, "%s", services[i].active);
-        mvprintw(row + 4, XSUB, "%s", services[i].sub);
-
-        if(strlen(services[i].description) >= maxx_description)
-        {
-            char short_description[maxx_description - 3];
-            strncpy(short_description, services[i].description, maxx_description - 3);
-
-            mvaddstr(row + 4, XDESCRIPTION, short_description);
-            mvaddstr(row + 4, XDESCRIPTION + maxx_description - 3, "...");
-        }
-        else
-            mvaddstr(row + 4, XDESCRIPTION, services[i].description);
-    } else if(i <= num_of_services && modus != ALL)
-    {
-        if(strlen(filtered_services[i].unit) >= XLOAD -3)
-        {
-            char short_unit[XLOAD - 2];
-            strncpy(short_unit, filtered_services[i].unit, XLOAD - 2);
-
-            mvaddstr(row + 4, 1, short_unit);
-            mvaddstr(row + 4,XLOAD - 4, "...");
-        }
-        else
-            mvaddstr(row + 4, 1, filtered_services[i].unit);
-
-        mvprintw(row + 4, XLOAD, "%8s", filtered_services[i].load);
-        mvprintw(row + 4, XACTIVE,"%8s", filtered_services[i].active);
-        mvprintw(row + 4, XSUB, "%8s", filtered_services[i].sub);
-
-        if(strlen(filtered_services[i].description) >= maxx_description)
-        {
-            char short_description[maxx_description - 3];
-            strncpy(short_description, filtered_services[i].description, maxx_description - 3);
-
-            mvaddstr(row + 4, XDESCRIPTION, short_description);
-            mvaddstr(row + 4, XDESCRIPTION + maxx_description - 3, "...");
-        }
-        else
-            mvaddstr(row + 4, XDESCRIPTION, filtered_services[i].description);
+    if (modus != ALL && modus != svc->type)
+        return 0;
+  
+    if(strlen(svc->unit) >= XLOAD -3) {     
+        char short_unit[XLOAD - 2];
+        strncpy(short_unit, svc->unit, XLOAD - 2);
+        mvaddstr(row + 4, 1, short_unit);
+        mvaddstr(row + 4,XLOAD - 4, "...");
     }
+    else
+        mvaddstr(row + 4, 1, svc->unit);
+    
+    mvprintw(row + 4, XLOAD, "%s", svc->load);
+    mvprintw(row + 4, XACTIVE, "%s", svc->active);
+    mvprintw(row + 4, XSUB, "%s", svc->sub);
+
+    if(strlen(svc->description) >= maxx_description) {
+        char short_description[maxx_description - 3];
+        strncpy(short_description, svc->description, maxx_description - 3);
+        mvaddstr(row + 4, XDESCRIPTION, short_description);
+        mvaddstr(row + 4, XDESCRIPTION + maxx_description - 3, "...");
+    }
+    else
+        mvaddstr(row + 4, XDESCRIPTION, svc->description);
+
+    svc->ypos = row + 4;
+    return 1;
 }
 
 /**
@@ -1522,74 +1547,18 @@ void print_services()
 {
     int max_rows = maxy - 5;
     int row = 0;
-    int i = index_start;
+    Service *svc;
 
-    i = index_start;
+    services_invalidate_ypos();
 
-    while(row < max_rows && i < num_of_services)
-    {
-        if(i < MAX_SERVICES)
-        {
-            switch(modus)
-            {
-                case ALL:
-                print_s(i, row);
-                row++;
-                break;
-                case DEVICE:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SLICE:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SERVICE:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SOCKET:
-                    print_s(i, row);
-                    row++;
-                break;
-                case TARGET:
-                    print_s(i, row);
-                    row++;
-                break;
-                case TIMER:
-                    print_s(i, row);
-                    row++;
-                break;
-                case MOUNT:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SCOPE:
-                    print_s(i, row);
-                    row++;
-                break;
-                case AUTOMOUNT:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SWAP:
-                    print_s(i, row);
-                    row++;
-                break;
-                case PATH:
-                    print_s(i, row);
-                    row++;
-                break;
-                case SNAPSHOT:
-                    print_s(i, row);
-                    row++;
-                break;
-                default:
-                continue;
-            }
-           i++;
-        }
-    } 
+    svc = service_nth(index_start);
+    while (svc) {    
+        if (row >= max_rows)
+	    break;
+
+        row += print_s(svc, row);
+	svc = TAILQ_NEXT(svc, e);
+    }
 }
 
 /**
@@ -1601,9 +1570,10 @@ void print_text_and_lines()
 {
     int x = XLOAD / 2 - 10;
     char *headline = "ServiceMaster V1.2 | Q/ESC:Quit";
-    char *functions = "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD";
-    char *types = "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT";
-
+    char tmptype[16] = {0};
+    int *total_types = NULL;
+    total_types = is_system ? total_system_types : total_user_types;
+    
     attroff(COLOR_PAIR(9));
     border(0, 0, 0, 0, 0, 0, 0, 0);
 
@@ -1612,12 +1582,12 @@ void print_text_and_lines()
     mvaddstr(1, 1, headline);
     attroff(COLOR_PAIR(8));
 
-    attron(COLOR_PAIR(9));
-    mvaddstr(1, strlen(headline) + 2, functions);
+    attron(COLOR_PAIR(9));        
+    mvaddstr(1, strlen(headline) + 2, FUNCTIONS);
     attroff(COLOR_PAIR(9));
 
     attron(COLOR_PAIR(10));
-    mvaddstr(1, strlen(headline) + strlen(functions) + 3, types);
+    mvaddstr(1, strlen(headline) + strlen(FUNCTIONS) + 3, SERVICE_TYPES);
     attroff(COLOR_PAIR(10));
 
     mvprintw(2, XLOAD - 10, "Pos.:%3d", position + index_start);
@@ -1638,50 +1608,11 @@ void print_text_and_lines()
 
     attron(COLOR_PAIR(4));
     attron(A_UNDERLINE);
-    switch(modus)
-    {
-        case ALL:
-            mvprintw(2, x, "Total: %d", num_of_services);
-            break;
-        case DEVICE:
-            mvprintw(2, x, "Devices: %d", total_types.devices);
-            break;
-        case SLICE:
-            mvprintw(2, x, "Slices: %d", total_types.slices);
-            break;
-        case SERVICE:
-            mvprintw(2, x, "Services: %3d", total_types.services);
-            break;
-        case SOCKET:
-            mvprintw(2, x, "Sockets: %d", total_types.sockets);
-            break;
-        case TARGET:
-            mvprintw(2, x, "Targets: %d", total_types.targets);
-            break;
-        case TIMER:
-            mvprintw(2, x, "Timers: %d", total_types.timers);
-            break;
-        case MOUNT:
-            mvprintw(2, x, "Mounts: %d", total_types.mounts);
-            break;
-        case SCOPE:
-            mvprintw(2, x, "Scopes: %d", total_types.scopes);
-            break;
-        case AUTOMOUNT:
-            mvprintw(2, x, "AutoMounts: %d", total_types.automounts);
-            break;
-        case SWAP:
-            mvprintw(2, x, "Swaps: %d", total_types.swaps);
-            break;
-        case PATH:
-            mvprintw(2, x, "Paths: %d", total_types.paths);
-            break;
-        case SNAPSHOT:
-            mvprintw(2, x, "Snapshots: %d", total_types.snapshots);
-            break;
-        default:
-            break;
-    }
+
+    /* Sets the type count */
+    strncpy(tmptype, str_types[modus], 16);
+    tmptype[0] = toupper(tmptype[0]);
+    mvprintw(2, x, "%s: %d", tmptype, total_types[modus]);
 
     attroff(COLOR_PAIR(4));
     attroff(A_UNDERLINE);
@@ -1692,23 +1623,6 @@ void print_text_and_lines()
     mvvline(2, XSUB -1, ACS_VLINE, maxy - 3);
     mvvline(2, XDESCRIPTION -1, ACS_VLINE, maxy - 3);
     refresh();
-}
-
-/**
- * Reloads all systemd services and updates the display.
- * This function is responsible for:
- * - Resetting the position and index_start variables
- * - Deleting all existing services
- * - Retrieving all systemd services and storing them
- * - Filtering the services based on the current modus
- * - Clearing the display to prepare for the updated service list
- */
-void reload_all(void)
-{
-    delete_all_services();
-    num_of_services = get_all_systemd_services();
-    filter_services();
-    clear();
 }
 
 /**
@@ -1752,18 +1666,32 @@ void wait_input()
 */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#define NO_STATUS "No status information available."
+
+#define MODE(mode) {\
+    position = 0;\
+    index_start = 0;\
+    modus = mode;\
+    clear();\
+}
+
+#define SD_OPERATION(mode, txt) {\
+    bool success = false; \
+    if(is_system && !is_root()) {\
+        show_status_window(" You must be root for this operation on system units. Press space to toggle: System/User.", "("txt")info:");\
+        break;\
+    }\
+    svc = service_nth(position + index_start); \
+    success = start_operation(svc->unit, mode);\
+    if (!success)\
+        show_status_window("Command could not be executed on this unit.", txt":");\
+}
+
 int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 {
-    enum Operations op;
-    bool success = false;
-    char *root_error = " You must be root for this operation on system units. Press space to toggle: System/User.";
-    char *pos = "Command sent successfully.";
-    char *neg = "Command could not be executed on this unit.";
-    char *no_status = "No status information available.";
-    char *status = NULL;
-
     int c;
-    int page_scroll = maxy - 6;
+    int *total_types = NULL;
+    total_types = is_system ? total_system_types : total_user_types;
 
     if ((revents & (EPOLLHUP|EPOLLERR|EPOLLRDHUP)) > 0) {
         endwin();
@@ -1773,385 +1701,155 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
     while ((c = getch()))
     {
+        Service *svc = NULL;
+        char *status = NULL;
         int max_services = 0;
 
         if (c == ERR)
             return 0;
 
-        for(int i = 0; i < num_of_services; i++) {
-            if(services[i].type == modus) {
-                max_services++;
-            } else if(modus == ALL)
-            {
-                max_services = num_of_services;
-                break;
-            }
-        }
-
-        switch(c)
+	max_services = total_types[modus];
+        switch(tolower(c))
         {
             case KEY_UP:
                 if (position > 0)
-                {
                     position--;
-                }
                 else if (index_start > 0)
                 {
                     index_start--;
                     clear();
                 }
                 break;
-            case KEY_PPAGE: // Page Up
-                if (index_start > 0)
-                {
-                    index_start -= page_scroll;
-                    if (index_start < 0)
-                    {
-                        index_start = 0;
-                    }
-                    clear();
-                }
-                position = 0;
-                break;
+
             case KEY_DOWN:
                 if (position < maxy - 6 && index_start + position < max_services - 1)
-                {
                     position++;
-                }
                 else if (index_start + position < max_services - 1)
                 {
                     index_start++;
                     clear();
                 }
                 break;
+
             case KEY_NPAGE: // Page Down
-                if (index_start < max_services - page_scroll)
+                if (index_start < max_services - PAGE_SCROLL)
                 {
-                    index_start += page_scroll;
+                    index_start += PAGE_SCROLL;
                     position = maxy - 6;
                     clear();
                 }
                 break;
+
             case KEY_LEFT:
                 if(modus > ALL)
-                {
-                    position = 0;
-                    index_start = 0;
-                    modus--;
-                    filter_services();
-                    clear();
-                }
+		    MODE(modus-1);
                 break;
+
             case KEY_RIGHT:
                 if(modus < SNAPSHOT)
-                {
-                    position = 0;
-                    index_start = 0;
-                    modus++;
-                    filter_services();
-                    clear();
-                }
+                    MODE(modus+1);
                 break;
+
             case KEY_SPACE:
                 if(is_system && is_root())
-                {
                     show_status_window(" Start Servicemaster as user to manipulate user units.", "You are now running as root !");
-                    break;
-                }
                 else if(is_system && !is_root())
-                {
                     is_system = false;
-                }
                 else
-                {
                     is_system = true;
-                }
-                //reload_all();
-                break;
-            case KEY_RETURN:
                 clear();
-                if(modus == ALL && position >= 0 && strlen(services[position + index_start].unit) > 1)
-                {
-                    status = get_status_info(&services[position + index_start]);
-                    if(status != NULL)
-                        show_status_window(status, "Status:");
-                } else if(modus != ALL && position >= 0 && strlen(filtered_services[position + index_start].unit) > 1)
-                {
-                    status = get_status_info(&filtered_services[position + index_start]);
-                    if(status != NULL)
-                        show_status_window(status, "Status:");
-                }
-                if(status != NULL)
-                    free(status);
-                else if(status == NULL)
-                    show_status_window(no_status, "Status:");
                 break;
+
+	        case KEY_RETURN:
+                svc = service_nth(position + index_start);
+                clear();
+                if(position < 0)
+                    break;
+                status = get_status_info(svc);
+
+                free(status);
+                break;
+
             case KEY_F(1):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Start)info:");
-                    break;
-                }
-                else
-                {
-                    op = START;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Start:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Start:");
+                SD_OPERATION(START, "Start");
                 break;
+
             case KEY_F(2):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Stop)info:");
-                    break;
-                }
-                else
-                {
-                    op = STOP;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Stop:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Stop:");
+                SD_OPERATION(STOP, "Stop");
                 break;
+
             case KEY_F(3):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Restart)info:");
-                    break;
-                }
-                else
-                {
-                    op = RESTART;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Restart:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Restart:");
+                SD_OPERATION(RESTART, "Restart");
                 break;
+
             case KEY_F(4):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Enable)info:");
-                    break;
-                }
-                else
-                {
-                    op = ENABLE;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Enable:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Enable:");
+                SD_OPERATION(ENABLE, "Enable");
                 break;
+
             case KEY_F(5):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Disable)info:");
-                    break;
-                }
-                else
-                {
-                    op = DISABLE;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Disable:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Disable:");
+                SD_OPERATION(DISABLE, "Disable");
                 break;
+
             case KEY_F(6):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Mask)info:");
-                    break;
-                }
-                else
-                {
-                    op = MASK;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Mask:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Mask:");
+                SD_OPERATION(MASK, "Mask");
                 break;
-            case KEY_F(7):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Unmask)info:");
-                    break;
-                }
-                else
-                {
-                    op = UNMASK;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Unmask:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Unmask:");
-                break;
+
             case KEY_F(8):
-                if(is_system && !is_root())
-                {
-                    show_status_window(root_error, "(Reload)info:");
-                    break;
-                }
-                else
-                {
-                    op = RELOAD;
-                    if(modus == ALL)
-                        success = start_operation(services[position + index_start].unit, op);
-                    else
-                        success = start_operation(filtered_services[position + index_start].unit, op);
-                }
-                if(success)
-                {
-                    show_status_window(pos, "Reload:");
-                    //reload_all();
-                }
-                else
-                    show_status_window(neg, "Reload:");
+                SD_OPERATION(RELOAD, "Reload");
                 break;
+
             case 'a':
-                position = 0;
-                index_start = 0;
-                modus = ALL;
-                clear();
+                MODE(ALL);
                 break;
+
             case 'd':
-                position = 0;
-                index_start = 0;
-                modus = DEVICE;
-                filter_services();
-                clear();
+                MODE(DEVICE);
                 break;
+
             case 'i':
-                position = 0;
-                index_start = 0;
-                modus = SLICE;
-                filter_services();
-                clear();
+                MODE(SLICE);
                 break;
+
             case 's':
-                position = 0;
-                index_start = 0;
-                modus = SERVICE;
-                filter_services();
-                clear();
+                MODE(SERVICE);
                 break;
+
             case 'o':
-                position = 0;
-                index_start = 0;
-                modus = SOCKET;
-                filter_services();
-                clear();
+                MODE(SOCKET);
                 break;
+
             case 't':
-                position = 0;
-                index_start = 0;
-                modus = TARGET;
-                filter_services();
-                clear();
+                MODE(TARGET);
                 break;
+
             case 'r':
-                position = 0;
-                index_start = 0;
-                modus = TIMER;
-                filter_services();
-                clear();
+                MODE(TIMER);
                 break;
+
             case 'm':
-                position = 0;
-                index_start = 0;
-                modus = MOUNT;
-                filter_services();
-                clear();
+                MODE(MOUNT);
                 break;
+
             case 'c':
-                position = 0;
-                index_start = 0;
-                modus = SCOPE;
-                filter_services();
-                clear();
+                MODE(SCOPE);
                 break;
+
             case 'n':
-                position = 0;
-                index_start = 0;
-                modus = AUTOMOUNT;
-                filter_services();
-                clear();
+                MODE(AUTOMOUNT);
                 break;
+
             case 'w':
-                position = 0;
-                index_start = 0;
-                modus = SWAP;
-                filter_services();
-                clear();
+                MODE(SWAP);
                 break;
+
             case 'p':
-                position = 0;
-                index_start = 0;
-                modus = PATH;
-                filter_services();
-                clear();
+                MODE(PATH);
                 break;
+
             case 'h':
-                position = 0;
-                index_start = 0;
-                modus = SNAPSHOT;
-                filter_services();
-                clear();
+                MODE(SNAPSHOT);
                 break;
+
             case 'q':
             case KEY_ESC:
                 quit();
@@ -2159,14 +1857,12 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
             default:
                 continue;
         }
-
-        if(index_start < 0) {
+       
+        if(index_start < 0)
             index_start = 0;
-        }
 
-        if(position < 0) {
+        if(position < 0)
             position = 0;
-        }
 
         if (index_start + position >= max_services) {
             if (max_services > maxy - 6) {
@@ -2204,45 +1900,23 @@ void setup_dbus()
 
     /* Now subscribe to events in systemd */
     rc = sd_bus_call_method(bus, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "Subscribe", &error, NULL, NULL);
-    if (rc < 0) {
-        endwin();
-        fprintf(stderr, "Cannot subcribe to systemd dbus events: %s\n", strerror(-rc));
-        exit(EXIT_FAILURE);
-    }
+    if (rc < 0)
+        FAIL("Cannot subcribe to systemd dbus events: %s\n", strerror(-rc));
 
-    if (sd_bus_error_is_set(&error)) {
-        endwin();
-        fprintf(stderr, "Cannot subcribe to systemd dbus events: %s\n", error.message);
-        exit(EXIT_FAILURE);
-    }
+    if (sd_bus_error_is_set(&error))
+        FAIL("Cannot subcribe to systemd dbus events: %s\n", error.message);
 
-    rc = sd_bus_match_signal(bus, NULL, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "UnitNew", add_unit, NULL);
-    if (rc < 0) {
-        endwin();
-        fprintf(stderr, "Cannot register interest in new units: %s\n", strerror(-rc));
-        exit(EXIT_FAILURE);
-    }
-
-    rc = sd_bus_match_signal(bus, NULL, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "UnitRemoved", remove_unit, NULL);
-    if (rc < 0) {
-        endwin();
-        fprintf(stderr, "Cannot register interest removed units: %s\n", strerror(-rc));
-        exit(EXIT_FAILURE);
-    }
+    rc = sd_bus_match_signal(bus, NULL, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), "Reloading", daemon_reloaded, NULL);
+    if (rc < 0) 
+        FAIL("Cannot register interest in daemon reloads: %s\n", strerror(-rc));
 
     rc = sd_event_default(&ev);
-    if (rc < 0) {
-        endwin();
-        fprintf(stderr, "Cannot fetch default event handler: %s\n", strerror(-rc));
-        exit(EXIT_FAILURE);
-    }
+    if (rc < 0)
+        FAIL("Cannot fetch default event handler: %s\n", strerror(-rc));
 
     rc = sd_bus_attach_event(bus, ev, SD_EVENT_PRIORITY_NORMAL);
-    if (rc < 0) {
-        endwin();
-        fprintf(stderr, "Unable to attach bus to event loop: %s\n", strerror(-rc));
-        exit(EXIT_FAILURE);
-    }
+    if (rc < 0)
+        FAIL("Unable to attach bus to event loop: %s\n", strerror(-rc));
 
     sd_bus_error_free(&error);
 }
@@ -2283,6 +1957,8 @@ void setup_event_loop()
 int main()
 {
     char *centered_intro = center(introduction);
+    int rc;
+    sd_bus *sys = NULL, *user = NULL;
 
     if(is_root())
         is_system = true;
@@ -2295,20 +1971,31 @@ int main()
     index_start = 0;
     
     init_screen();
-    
-    setup_dbus();
-  
-    num_of_services = get_all_systemd_services();
-    if (num_of_services < 0) {
+
+    if (sd_bus_default_system(&sys) < 0 || sd_bus_default_user(&user) < 0) {
+        fprintf(stderr, "Cannot initialize DBUS!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    setup_dbus(sys);
+    setup_dbus(user);
+
+    rc = get_all_systemd_services(true);
+    if (rc < 0) {
         endwin();
         return -1;
     }
-     if (centered_intro != NULL) {
+
+    rc = get_all_systemd_services(false);
+    if (rc < 0) {
+        endwin();
+        return -1;
+    }
+
+    if (centered_intro != NULL) {
         show_status_window(center(introduction), intro_title);
         free(centered_intro);
     }
-
-    filter_services();
 
     print_text_and_lines();
 
