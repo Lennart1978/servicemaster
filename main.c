@@ -42,8 +42,13 @@
 #define UNIT_PROPERTY_SZ 256
 #define INVOCATION_SZ 33
 
+struct Service;
+typedef struct Service Service;
+
+
 void print_services();
 void print_text_and_lines();
+void get_unit_file_state(Service *svc, bool system);
 int get_all_systemd_services(bool system);
 
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
@@ -894,7 +899,6 @@ char* get_status_info(Service *svc) {
         goto fin;
 
     unit_property(bus, svc->object, SD_IFACE("Unit"), "FragmentPath", "s", svc->fragment_path, sizeof(svc->fragment_path));
-    unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", svc->unit_file_state, sizeof(svc->unit_file_state));
 
     switch (svc->type) {
         case SERVICE:
@@ -1087,6 +1091,7 @@ static int update_service_property(Service *svc, sd_bus_message *reply)
 
         return 1;
     }
+
     else
       /* Anything else is skipped */
       sd_bus_message_skip(reply, NULL);
@@ -1238,6 +1243,7 @@ int get_all_systemd_services(bool is_system) {
         strncpy(svc->sub, sub, sizeof(svc->sub) - 1);
         strncpy(svc->description, description, sizeof(svc->description) - 1);
         strncpy(svc->object, object, sizeof(svc->object) - 1);
+        unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", svc->unit_file_state, sizeof(svc->unit_file_state));
 
         /* Sets the units type */
         for (int j=0; j < MAX_TYPES; j++) {
@@ -1329,7 +1335,7 @@ int print_s(Service *svc, int row)
     else
         mvaddstr(row + 4, 1, svc->unit);
     
-    mvprintw(row + 4, XLOAD, "%s", svc->load);
+    mvprintw(row + 4, XLOAD, "%s", strlen(svc->unit_file_state) ? svc->unit_file_state : svc->load);
     mvprintw(row + 4, XACTIVE, "%s", svc->active);
     mvprintw(row + 4, XSUB, "%s", svc->sub);
 
@@ -1449,7 +1455,7 @@ void print_text_and_lines()
     attroff(COLOR_PAIR(4));
 
     mvprintw(2, 16, "Space: User/System");
-    mvprintw(2, XLOAD, "LOAD:");
+    mvprintw(2, XLOAD, "STATE:");
     mvprintw(2, XACTIVE, "ACTIVE:");
     mvprintw(2, XSUB, "SUB:");
     mvprintw(2, XDESCRIPTION, "DESCRIPTION: | Left/Right: Modus | Up/Down: Select | Return: Show status");
@@ -1504,6 +1510,48 @@ void wait_input()
     return;
 }
 
+void get_unit_file_state(Service *svc, bool is_system)
+{
+    sd_bus *bus = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    const char *state = NULL;
+    int rc;
+
+    rc = is_system ? sd_bus_default_system(&bus) : sd_bus_default_user(&bus);
+    if (rc < 0)
+        FAIL("Cannot get unit file state for %s: %s\n", svc->unit, strerror(-rc));
+
+    rc = sd_bus_call_method(bus,
+                            SD_DESTINATION,
+                            SD_OPATH,
+                            SD_IFACE("Manager"),
+                            "GetUnitFileState",
+                            &error,
+                            &reply,
+			    "s",
+                            svc->unit);
+    if (rc < 0) {
+        if (-rc == ENOENT || -rc == ENOLINK)
+            return;
+        FAIL("Cannot send dbus message to get unit state for %s: %s\n", svc->unit, strerror(-rc));
+    }
+
+    if (sd_bus_error_is_set(&error))
+        FAIL("Bad reply to unit file state: %s\n", error.message);
+
+    rc = sd_bus_message_read(reply, "s", &state);
+    if (rc < 0)
+	FAIL("Bad response reading message reply: %s\n", strerror(-rc));
+
+    memset(svc->unit_file_state, 0, UNIT_PROPERTY_SZ);
+    strncpy(svc->unit_file_state, state, UNIT_PROPERTY_SZ);
+
+    sd_bus_unref(bus);
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+}
+
 /**
  * Handles user input and performs various operations on systemd services.
  * This function is responsible for:
@@ -1552,6 +1600,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
         Service *svc = NULL;
         char *status = NULL;
         int max_services = 0;
+        bool update_state = false;
 
         if (c == ERR)
             return 0;
@@ -1624,18 +1673,22 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
             case KEY_F(4):
                 SD_OPERATION(ENABLE, "Enable");
+                update_state = true;
                 break;
 
             case KEY_F(5):
                 SD_OPERATION(DISABLE, "Disable");
+                update_state = true;
                 break;
 
             case KEY_F(6):
                 SD_OPERATION(MASK, "Mask");
+                update_state = true;
                 break;
 
             case KEY_F(7):
                 SD_OPERATION(UNMASK, "Unmask");
+                update_state = true;
                 break;
 
             case KEY_F(8):
@@ -1702,6 +1755,19 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
             default:
                 continue;
         }
+
+	if (update_state)
+	    get_unit_file_state(svc, is_system);
+
+        /* redraw any lines we have invalidated */
+	if (update_state && svc->ypos > -1) {
+            int x, y;
+	    get_unit_file_state(svc, is_system);
+            getyx(stdscr, y, x);
+            wmove(stdscr, svc->ypos, XLOAD);
+            wclrtoeol(stdscr);
+            wmove(stdscr, y, x);
+        }
        
         if(index_start < 0)
             index_start = 0;
@@ -1718,6 +1784,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 position = max_services - 1;
             }
         }
+
         print_text_and_lines();
         print_services();
     }
