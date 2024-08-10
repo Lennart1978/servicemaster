@@ -122,6 +122,8 @@ const char *str_operations[] = {
 
 typedef struct Service {
     int ypos;
+    int changed;
+    uint64_t last_update;
 
     char unit[CHARS_UNIT];
     char load[CHARS_LOAD];
@@ -237,6 +239,34 @@ static inline void service_insert(Service *svc, bool is_system) {
     TAILQ_INSERT_TAIL(list, svc, e);
 }
 
+/* Return the service that matches this unit name */
+static inline Service * service_get_name(const char *name, bool is_system)
+{
+    struct service_list *list = NULL;
+    Service *svc = NULL;
+
+    list = is_system ? &system_services: &user_services;
+    TAILQ_FOREACH(svc, list, e) {
+        if (strcmp(name, svc->unit) == 0)
+            return svc;
+    }
+
+    return NULL;
+}
+
+static inline void service_refresh_row(Service *svc)
+{
+    /* If the service is on the screen, invalidate the row so it refreshes
+     * correctly */
+    if (svc->ypos > -1) {
+        int x, y;
+        getyx(stdscr, y, x);
+        wmove(stdscr, svc->ypos, XLOAD);
+        wclrtoeol(stdscr);
+        wmove(stdscr, y, x);
+    }
+}
+
 static inline void services_empty(void)
 {
     struct service_list *list = NULL;
@@ -252,6 +282,40 @@ static inline void services_empty(void)
     }
 }
 
+/* Iterate through the list, remove any that haven't been updated since
+ * timestamp */
+static inline void services_prune_dead_units(bool is_system, uint64_t ts)
+{
+    struct service_list *list = NULL;
+    int removed = 0;
+    Service *svc = NULL;
+
+    list = is_system ? &system_services: &user_services;
+
+    svc = TAILQ_FIRST(list);
+    while (svc) {
+      Service *n;
+      n = TAILQ_NEXT(svc, e);
+
+      if (svc->last_update >= ts) {
+          svc = n;
+          continue;
+      }
+
+      TAILQ_REMOVE(list, svc, e);
+      if (svc->ypos > -1)
+          removed++;
+      sd_bus_slot_unref(svc->slot);
+      free(svc);
+      svc = n;
+    }
+
+    /* If and only if we removed a item from our ACTIVE list, clear the screen */
+    if (removed)
+        erase();
+    return;
+}
+
 /* This is used during the print services routine
  * to reset the y positions on all services, since not
  * every service is displayed at once. */
@@ -263,6 +327,24 @@ static inline void services_invalidate_ypos(void) {
     TAILQ_FOREACH(svc, list, e) {
         svc->ypos = -1;
     }
+}
+
+uint64_t get_now()
+{
+    sd_event *ev = NULL;
+    uint64_t now;
+    int rc;
+
+    rc = sd_event_default(&ev);
+    if (rc < 0)
+        FAIL("Cannot find default event handler: %s\n", strerror(-rc));
+
+    rc = sd_event_now(ev, CLOCK_MONOTONIC, &now);
+    if (rc < 0)
+        FAIL("Cannot fetch event handler timestamp: %s\n", strerror(-rc));
+
+    sd_event_unref(ev);
+    return now;
 }
 
 /**
@@ -1036,12 +1118,12 @@ int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err)
 
     rc = get_all_systemd_services(system);
     if (rc < 0)
-        FAIL("Cannot relaod system units: %s\n", strerror(-rc));
+        FAIL("Cannot reload system units: %s\n", strerror(-rc));
     
     if ((system && is_system) || (!system && !is_system)) {
-        clear();
-        print_text_and_lines();
         print_services();
+        clrtobot();
+        print_text_and_lines();
         refresh();
     }
 
@@ -1092,7 +1174,6 @@ static int update_service_property(Service *svc, sd_bus_message *reply)
 int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
 {
     Service *svc = (Service *)data;
-    int changed = 0;
     const char *iface = NULL;
     int rc;
 
@@ -1126,15 +1207,10 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
         if (rc == 0)
             break; 
 
-        changed += update_service_property(svc, reply);
-	/* If the service is on the screen, invalidate the row so it refreshes
-	 * correctly */
-	if (svc->ypos > -1) {
-            int x, y;
-            getyx(stdscr, y, x);
-            wmove(stdscr, svc->ypos, XLOAD);
-            wclrtoeol(stdscr);
-            wmove(stdscr, y, x);
+        svc->changed += update_service_property(svc, reply);
+        if (svc->changed) {
+            service_refresh_row(svc);
+            svc->last_update = get_now();
         }
 
         if (sd_bus_message_exit_container(reply) < 0)
@@ -1144,9 +1220,10 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
     sd_bus_message_exit_container(reply);
 
     /* Redraw screen if something changed */
-    if (changed) {
-        print_text_and_lines();
+    if (svc->changed) {
+	svc->changed = 0;
         print_services();
+        print_text_and_lines();
         refresh();
     }
 
@@ -1174,6 +1251,7 @@ int get_all_systemd_services(bool is_system) {
     sd_bus_message *reply = NULL;    
     int r = 0;
     int *total_types = NULL;
+    uint64_t now = get_now();
 
     total_types = is_system ? total_system_types : total_user_types;
 
@@ -1205,35 +1283,54 @@ int get_all_systemd_services(bool is_system) {
         return -1;
     }
 
-    services_empty();
-
     const char *unit, *load, *active, *sub, *description, *object;
     while (true) {
-	Service *svc = NULL;
+        bool is_new = false;
+        char unit_state[UNIT_PROPERTY_SZ] = {0};
+        Service *svc = NULL;
 
-	r = sd_bus_message_read(reply, "(ssssssouso)", 
+        r = sd_bus_message_read(reply, "(ssssssouso)", 
                                 &unit, &description, &load, &active, &sub,
                                 NULL, &object, NULL, NULL, NULL);
-	if (r < 0)
+        if (r < 0)
             FAIL("Cannot read DBUS message to get system services: %s\n", strerror(-r));
 
-	if (r == 0)
-	  break;
+        if (r == 0)
+	    break;
 
-	svc = service_init();
-	if (!svc) {
+        svc = service_get_name(unit, is_system);
+        if (!svc) {
+           is_new = true;
+           svc = service_init();
+        }
+
+        if (!svc) {
             sd_bus_error_free(&error);
             sd_bus_unref(bus);
             return -1;
         }
         
+        svc->last_update = now;
         strncpy(svc->unit, unit, sizeof(svc->unit) - 1);
+        if (strcmp(svc->load, load))
+            svc->changed++;
+        if (strcmp(svc->active, active))
+            svc->changed++;
+        if (strcmp(svc->sub, sub))
+            svc->changed++;
+
+
         strncpy(svc->load, load, sizeof(svc->load) - 1);
         strncpy(svc->active, active, sizeof(svc->active) - 1);
         strncpy(svc->sub, sub, sizeof(svc->sub) - 1);
         strncpy(svc->description, description, sizeof(svc->description) - 1);
         strncpy(svc->object, object, sizeof(svc->object) - 1);
-        unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", svc->unit_file_state, sizeof(svc->unit_file_state));
+        unit_property(bus, svc->object, SD_IFACE("Unit"), "UnitFileState", "s", unit_state, sizeof(unit_state));
+
+        if (strcmp(svc->unit_file_state, unit_state))
+            svc->changed++;
+        strncpy(svc->unit_file_state, unit_state, UNIT_PROPERTY_SZ);
+
 
         /* Sets the units type */
         for (int j=0; j < MAX_TYPES; j++) {
@@ -1243,29 +1340,29 @@ int get_all_systemd_services(bool is_system) {
               }
         }
 
-        svc->unit[sizeof(svc->unit) - 1] = '\0';
-        svc->load[sizeof(svc->load) - 1] = '\0';
-        svc->active[sizeof(svc->active) - 1] = '\0';
-        svc->sub[sizeof(svc->sub) - 1] = '\0';
-        svc->description[sizeof(svc->description) - 1] = '\0';
+        if (is_new) {
+            /* Register interest in events on this object */
+            r = sd_bus_match_signal(bus, 
+                                    &svc->slot,
+                                    SD_DESTINATION,
+                                    object,
+                                    "org.freedesktop.DBus.Properties",
+                                    "PropertiesChanged",
+                                    changed_unit,
+                                   (void *)svc);
+            if (r < 0)
+                FAIL("Cannot register interest changed units: %s\n", strerror(-r));
 
-        /* Register interest in events on this object */
-        r = sd_bus_match_signal(bus, 
-                                &svc->slot,
-                                SD_DESTINATION,
-                                object,
-                                "org.freedesktop.DBus.Properties",
-                                "PropertiesChanged",
-                                changed_unit,
-                                (void *)svc);
-        if (r < 0) {
-            endwin();
-            fprintf(stderr, "Cannot register interest changed units: %s\n", strerror(-r));
-            exit(EXIT_FAILURE);
+            service_insert(svc, is_system);
         }
 
-	service_insert(svc, is_system);
+        if (svc->changed) {
+            service_refresh_row(svc);
+            svc->changed = 0;
+        }
     }
+
+    services_prune_dead_units(is_system, now);
 
     sd_bus_message_exit_container(reply);
     sd_bus_message_unref(reply);
@@ -1771,13 +1868,10 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 	    get_unit_file_state(svc, is_system);
 
         /* redraw any lines we have invalidated */
-	if (update_state && svc->ypos > -1) {
-            int x, y;
-            getyx(stdscr, y, x);
-            wmove(stdscr, svc->ypos, XLOAD);
-            wclrtoeol(stdscr);
-            wmove(stdscr, y, x);
-        }
+	if (update_state) {
+            service_refresh_row(svc);
+            svc->changed = 0;
+	}
        
         if(index_start < 0)
             index_start = 0;
