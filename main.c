@@ -47,12 +47,11 @@ void print_text_and_lines();
 int get_all_systemd_services(bool system);
 
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
-                     " only user user units.\nPress Return to display unit status information. Use left/right to toggle modes and up/down"
+                     " only user user units.\nPress Return to display unit status information.\nUse left/right to toggle modes and arrow up/down, page up/down"
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
                      "https://github.com/lennart1978/servicemaster\nVersion: 1.2";
-
 
 const char *intro_title = "A quick introduction to ServiceMaster:";
 
@@ -165,19 +164,12 @@ int total_system_types[MAX_TYPES];
 
 enum Type modus;
 
-
-
-
-
-
-
 static inline Service * service_init(void) {
     Service *svc = NULL;
     svc = calloc(1, sizeof(Service));
 
     return svc;
 }
-
 
 /* Return the nth service in the list, accounting for the enabled
  * filter */
@@ -267,7 +259,6 @@ static inline void services_invalidate_ypos(void) {
         svc->ypos = -1;
     }
 }
-
 
 /**
  * Centers the given text by adding spaces to the beginning and end of each line to make the text centered.
@@ -424,7 +415,6 @@ void show_status_window(const char *status, const char *title) {
 
     delwin(win);
     refresh();
-
 }
 
 /**
@@ -1552,6 +1542,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
         Service *svc = NULL;
         char *status = NULL;
         int max_services = 0;
+        int page_scroll = maxy - 6;
 
         if (c == ERR)
             return 0;
@@ -1579,6 +1570,27 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 }
                 break;
 
+            case KEY_PPAGE: // Page Up
+                if (index_start > 0)
+                {
+                    index_start -= page_scroll;
+                    if (index_start < 0)
+                    {
+                        index_start = 0;
+                    }
+                    clear();
+                }
+                position = 0;
+                break;
+
+            case KEY_NPAGE: // Page Down
+                if (index_start < max_services - page_scroll)
+                {
+                    index_start += page_scroll;
+                    position = maxy - 6;
+                    clear();
+                }
+                break;
             case KEY_LEFT:
                 if(modus > ALL)
 		    MODE(modus-1);
