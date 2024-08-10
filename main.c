@@ -1282,7 +1282,6 @@ void quit()
 {
     clear();
     endwin();
-    printf("Thank you for using ServiceMaster, I hope you enjoyed it.\n");
     exit(EXIT_SUCCESS);
 }
 
@@ -1774,7 +1773,6 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
         /* redraw any lines we have invalidated */
 	if (update_state && svc->ypos > -1) {
             int x, y;
-	    get_unit_file_state(svc, is_system);
             getyx(stdscr, y, x);
             wmove(stdscr, svc->ypos, XLOAD);
             wclrtoeol(stdscr);
