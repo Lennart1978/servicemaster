@@ -197,6 +197,18 @@ static inline Service * service_nth(int n) {
     return TAILQ_FIRST(list);
 }
 
+static inline Service * service_ypos(int ypos) {
+    Service *svc;
+    struct service_list *list = NULL;
+    list = is_system ? &system_services: &user_services;
+
+    TAILQ_FOREACH(svc, list, e) {
+        if (svc->ypos == ypos)
+            return svc;
+    }
+    return NULL;
+}
+
 
 /* Insert service into the list in a sorted order */
 static inline void service_insert(Service *svc, bool is_system) {
@@ -1512,12 +1524,12 @@ void wait_input()
 }
 
 #define SD_OPERATION(mode, txt) {\
-    bool success = false; \
+    bool success = false;\
     if(is_system && !is_root()) {\
         show_status_window(" You must be root for this operation on system units. Press space to toggle: System/User.", "("txt")info:");\
         break;\
     }\
-    svc = service_nth(position + index_start); \
+    svc = service_ypos(position + 4);\
     success = start_operation(svc->unit, mode);\
     if (!success)\
         show_status_window("Command could not be executed on this unit.", txt":");\
@@ -1588,7 +1600,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 break;
 
 	    case KEY_RETURN:
-		svc = service_nth(position + index_start);
+		svc = service_ypos(position + 4);
                 clear();
                 if(position < 0)
                     break;
