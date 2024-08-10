@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 
+#define VERSION "1.3"
 #define FUNCTIONS     "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
 #define SERVICE_TYPES "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT"
 
@@ -56,7 +57,7 @@ const char *introduction = "Press Space to switch between system and user system
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: 1.2";
+                     "https://github.com/lennart1978/servicemaster\nVersion: "VERSION;
 
 const char *intro_title = "A quick introduction to ServiceMaster:";
 
@@ -194,6 +195,12 @@ static inline Service * service_nth(int n) {
     return TAILQ_FIRST(list);
 }
 
+/**
+ * Finds the service with the specified y-position in the service list.
+ *
+ * @param ypos The y-position of the service to find.
+ * @return The service with the specified y-position, or NULL if not found.
+ */
 static inline Service * service_ypos(int ypos) {
     Service *svc;
     struct service_list *list = NULL;
@@ -237,6 +244,14 @@ static inline void service_insert(Service *svc, bool is_system) {
     TAILQ_INSERT_TAIL(list, svc, e);
 }
 
+/**
+ * Removes all services from the service list.
+ *
+ * This function iterates through the service list and removes each service,
+ * freeing the associated resources. It is used to clear the service list
+ * when the application is shutting down or when the service list needs to
+ * be reset.
+ */
 static inline void services_empty(void)
 {
     struct service_list *list = NULL;
@@ -1010,6 +1025,18 @@ bool is_enableable_unit_type(const char *unit) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+
+/**
+ * Handles the daemon reload callback from the D-Bus message.
+ * This function is called when the systemd daemon has been reloaded.
+ * It checks the reload status, and if successful, it retrieves all the
+ * systemd services and updates the screen accordingly.
+ *
+ * @param reply The D-Bus message containing the reload status.
+ * @param data The user data passed to the callback, which is a pointer to the Service struct.
+ * @param err The D-Bus error object, if any.
+ * @return 0 on success, a negative error code on failure.
+ */
 int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err)
 {
     int  rc, reload_started;
@@ -1050,6 +1077,17 @@ fin:
     return 0;
 }
 
+/**
+ * Updates a specific property of a service based on the received D-Bus message.
+ *
+ * This function is called for each dictionary entry in the D-Bus message. It
+ * checks if the key is a property that needs to be updated, and if so, it
+ * updates the corresponding field in the Service struct.
+ *
+ * @param svc The Service struct to be updated.
+ * @param reply The D-Bus message containing the service property updates.
+ * @return 1 if a property was updated, 0 otherwise.
+ */
 static int update_service_property(Service *svc, sd_bus_message *reply)
 {
     /* Format of message at this point is: '{sv}' */
@@ -1089,6 +1127,19 @@ static int update_service_property(Service *svc, sd_bus_message *reply)
     return 0;
 }
 
+/**
+ * Callback function that handles changes to a systemd service.
+ *
+ * This function is called when a change is detected in a systemd service. It reads the
+ * updated properties from the D-Bus message and updates the corresponding fields in the
+ * Service struct. If any properties have changed, it redraws the screen to reflect the
+ * updated service status.
+ *
+ * @param reply The D-Bus message containing the updated service properties.
+ * @param data A pointer to the Service struct to be updated.
+ * @param err An error object, if an error occurred.
+ * @return 0 on success, or a negative error code on failure.
+ */
 int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
 {
     Service *svc = (Service *)data;
@@ -1411,7 +1462,7 @@ void print_services()
 void print_text_and_lines()
 {
     int x = XLOAD / 2 - 10;
-    char *headline = "ServiceMaster V1.2 | Q/ESC:Quit";
+    char *headline = "ServiceMaster "VERSION" | Q/ESC:Quit";
 
     char tmptype[16] = {0};
     int *total_types = NULL;
@@ -1499,6 +1550,16 @@ void wait_input()
     return;
 }
 
+/**
+ * Retrieves the unit file state for the given service.
+ *
+ * This function uses the systemd D-Bus API to fetch the current state of the
+ * unit file associated with the provided service. The state is stored in the
+ * `unit_file_state` field of the `Service` struct.
+ *
+ * @param svc The service to retrieve the unit file state for.
+ * @param is_system Indicates whether the service is a system service (true) or a user service (false).
+ */
 void get_unit_file_state(Service *svc, bool is_system)
 {
     sd_bus *bus = NULL;
@@ -1560,6 +1621,17 @@ void get_unit_file_state(Service *svc, bool is_system)
     clear();\
 }
 
+/**
+ * Performs a systemd operation (start, stop, restart, etc.) on a service.
+ * This macro checks if the operation is being performed on a system unit and the
+ * user is not root, in which case it displays a status message and breaks out
+ * of the operation. Otherwise, it retrieves the service at the current cursor
+ * position, calls the `start_operation()` function to perform the requested
+ * operation, and displays a status message if the operation fails.
+ *
+ * @param mode The systemd operation to perform (e.g. "start", "stop", "restart").
+ * @param txt A string describing the operation (e.g. "Start", "Stop", "Restart").
+ */
 #define SD_OPERATION(mode, txt) {\
     bool success = false;\
     if(is_system && !is_root()) {\
@@ -1572,6 +1644,20 @@ void get_unit_file_state(Service *svc, bool is_system)
         show_status_window("Command could not be executed on this unit.", txt":");\
 }
 
+/**
+ * Handles user input and performs various operations on systemd services.
+ * This function is responsible for:
+ * - Handling user input from the keyboard, including navigation, service operations, and mode changes
+ * - Updating the display based on the current state and user actions
+ * - Calling appropriate functions to perform service operations (start, stop, restart, etc.)
+ * - Reloading the service list when necessary
+ *
+ * @param s The event source that triggered the callback.
+ * @param fd The file descriptor associated with the event source.
+ * @param revents The events that occurred on the file descriptor.
+ * @param data Arbitrary user data passed to the callback.
+ * @return 0 to indicate the event was handled successfully.
+ */
 int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 {
     int c;
@@ -1942,4 +2028,3 @@ int main()
     endwin();
     return 0;
 }
-// Bug reports, feature requests and suggestions for improvement are welcome: monkeynator78@gmail.com  Lennart
