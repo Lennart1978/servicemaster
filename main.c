@@ -1455,7 +1455,7 @@ int print_s(Service *svc, int row)
 
     if (modus != ALL && modus != svc->type)
         return 0;
-
+    // if the unit name is too long, truncate it and add ...
     if(strlen(svc->unit) >= XLOAD -3) {     
         char short_unit[XLOAD - 2];
         strncpy(short_unit, svc->unit, XLOAD - 2);
@@ -1464,11 +1464,22 @@ int print_s(Service *svc, int row)
     }
     else
         mvaddstr(row + 4, 1, svc->unit);
+    // if the state is too long, truncate it (enabled-runtime will be enabled-r)
+    if(strlen(svc->unit_file_state) > 9)
+    {
+        char short_unit_file_state[9];
+        strncpy(short_unit_file_state, svc->unit_file_state, 9);
+        short_unit_file_state[9] = '\0';
+        mvaddstr(row + 4, XLOAD, short_unit_file_state);
+    }
+    else
+    {
+        mvprintw(row + 4, XLOAD, "%s", strlen(svc->unit_file_state) ? svc->unit_file_state : svc->load);
+    }
     
-    mvprintw(row + 4, XLOAD, "%s", strlen(svc->unit_file_state) ? svc->unit_file_state : svc->load);
     mvprintw(row + 4, XACTIVE, "%s", svc->active);
     mvprintw(row + 4, XSUB, "%s", svc->sub);
-
+    // if the description is too long, truncate it and add ...
     if(strlen(svc->description) >= maxx_description) {
         char short_description[maxx_description - 3];
         strncpy(short_description, svc->description, maxx_description - 3);
