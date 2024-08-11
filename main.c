@@ -1467,7 +1467,7 @@ int print_s(Service *svc, int row)
     // if the state is too long, truncate it (enabled-runtime will be enabled-r)
     if(strlen(svc->unit_file_state) > 9)
     {
-        char short_unit_file_state[9];
+        char short_unit_file_state[10];
         strncpy(short_unit_file_state, svc->unit_file_state, 9);
         short_unit_file_state[9] = '\0';
         mvaddstr(row + 4, XLOAD, short_unit_file_state);
