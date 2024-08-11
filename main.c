@@ -64,6 +64,7 @@ const char *intro_title = "A quick introduction to ServiceMaster:";
 int maxx, maxy, position, index_start;
 size_t maxx_description;
 bool is_system = false;
+bool system_only = false;
 
 enum Operations {
     START,
@@ -1825,12 +1826,9 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 break;
 
             case KEY_SPACE:
-                if(is_system && is_root())
-                    show_status_window(" Start Servicemaster as user to manipulate user units.", "You are now running as root !");
-                else if(is_system && !is_root())
-                    is_system = false;
-                else
-                    is_system = true;
+                if (system_only)
+	            break;
+                is_system ^= 0x1;
 		clear();
                 break;
 
@@ -2077,14 +2075,18 @@ int main()
     
     init_screen();
 
-    if (sd_bus_default_system(&sys) < 0 || sd_bus_default_user(&user) < 0) {
-        endwin();
-        fprintf(stderr, "Cannot initialize DBUS!\n");  
-        exit(EXIT_FAILURE);
-    }
+    if (sd_bus_default_system(&sys) < 0)
+        FAIL("Cannot initialize DBUS!\n");
+
+    rc = sd_bus_default_user(&user);
+    if (-rc == ENOMEDIUM)
+        system_only = true;
+    else if (rc < 0)
+        FAIL("Cannot initialize DBUS: %s\n", strerror(-rc));
 
     setup_dbus(sys);
-    setup_dbus(user);
+    if (!system_only)
+        setup_dbus(user);
 
     rc = get_all_systemd_services(true);
     if (rc < 0) {
@@ -2092,10 +2094,12 @@ int main()
         return -1;
     }
 
-    rc = get_all_systemd_services(false);
-    if (rc < 0) {
-        endwin();
-        return -1;
+    if (!system_only) {
+      rc = get_all_systemd_services(false);
+      if (rc < 0) {
+          endwin();
+          return -1;
+      }
     }
 
     if (centered_intro != NULL) {
