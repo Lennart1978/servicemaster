@@ -55,7 +55,7 @@ int get_all_systemd_services(bool system);
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information.\nUse left/right to toggle modes and arrow up/down, page up/down"
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
-                     "I am not responsible for any damage caused by this program.\nIf you don't exactly know what you are doing here, please don't use it.\n"
+                     "The program reacts immediately to unit changes from outside (DBus).\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
                      "https://github.com/lennart1978/servicemaster\nVersion: "VERSION;
 
@@ -193,7 +193,6 @@ static inline Service * service_nth(int n) {
 	if (svc->type == modus || modus == ALL)
             i++;
     }
-
     return TAILQ_FIRST(list);
 }
 
@@ -257,7 +256,6 @@ static inline Service * service_get_name(const char *name, bool is_system)
         if (strcmp(name, svc->unit) == 0)
             return svc;
     }
-
     return NULL;
 }
 
@@ -908,7 +906,6 @@ fail:
     return NULL;
 }
 
-
 /**
  * Retrieves the invocation ID for the specified system or user service unit.
  *
@@ -960,7 +957,6 @@ fail:
     sd_bus_error_free(&error);
     sd_bus_message_unref(reply);
     return false;
-
 }
 
 /**
@@ -1345,7 +1341,6 @@ int get_all_systemd_services(bool is_system) {
                                 NULL, &object, NULL, NULL, NULL);
         if (r < 0)
             FAIL("Cannot read DBUS message to get system services: %s\n", strerror(-r));
-
         if (r == 0)
 	    break;
 
@@ -1370,7 +1365,6 @@ int get_all_systemd_services(bool is_system) {
         if (strcmp(svc->sub, sub))
             svc->changed++;
 
-
         strncpy(svc->load, load, sizeof(svc->load) - 1);
         strncpy(svc->active, active, sizeof(svc->active) - 1);
         strncpy(svc->sub, sub, sizeof(svc->sub) - 1);
@@ -1381,8 +1375,6 @@ int get_all_systemd_services(bool is_system) {
         if (strcmp(svc->unit_file_state, unit_state))
             svc->changed++;
         strncpy(svc->unit_file_state, unit_state, UNIT_PROPERTY_SZ);
-
-
         /* Sets the units type */
         for (int j=0; j < MAX_TYPES; j++) {
               if (test_unit_extension(svc->unit, str_types[j])) {
@@ -2086,7 +2078,8 @@ int main()
     init_screen();
 
     if (sd_bus_default_system(&sys) < 0 || sd_bus_default_user(&user) < 0) {
-        fprintf(stderr, "Cannot initialize DBUS!\n");
+        endwin();
+        fprintf(stderr, "Cannot initialize DBUS!\n");  
         exit(EXIT_FAILURE);
     }
 
