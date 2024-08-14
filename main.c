@@ -149,14 +149,14 @@ typedef struct Service {
     uint64_t zswap_peak;
     uint64_t cpu_usage;
     char cgroup[UNIT_PROPERTY_SZ];
-    
+
     char sysfs_path[UNIT_PROPERTY_SZ];     // For DEVICE
     char mount_where[UNIT_PROPERTY_SZ];    // For MOUNT
     char mount_what[UNIT_PROPERTY_SZ];     // For MOUNT
     uint64_t next_elapse;                  // For TIMER
     char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
     uint32_t backlog;                      // For SOCKET
-    
+
     enum Type type;
     sd_bus_slot *slot;
 
@@ -358,6 +358,7 @@ uint64_t get_now()
         FAIL("Cannot fetch event handler timestamp: %s\n", strerror(-rc));
 
     sd_event_unref(ev);
+
     return now;
 }
 
@@ -562,7 +563,7 @@ bool start_operation(const char* unit, enum Operations operation) {
 
     if (strcmp(method, "EnableUnitFiles") == 0 || strcmp(method, "MaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
-        if (r < 0) 
+        if (r < 0)
             goto finish;
 
         r = sd_bus_message_append_strv(m, (char*[]) { (char*)unit, NULL });
@@ -576,7 +577,7 @@ bool start_operation(const char* unit, enum Operations operation) {
         r = sd_bus_call(bus, m, 0, &error, &reply);
         if (r < 1)
             goto finish;
-        
+
     } else if (strcmp(method, "DisableUnitFiles") == 0 || strcmp(method, "UnmaskUnitFiles") == 0) {
         r = sd_bus_message_new_method_call(bus, &m, SD_DESTINATION, SD_OPATH, SD_IFACE("Manager"), method);
         if (r < 0)
@@ -1123,11 +1124,11 @@ int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err)
     bool system = false;
     sd_bus *bus;
 
-    if (sd_bus_error_is_set(err)) 
+    if (sd_bus_error_is_set(err))
         FAIL("Remove unit callback failed: %s\n", err->message);
 
     rc = sd_bus_message_read(reply, "b", &reload_started);
-    if (rc < 0) 
+    if (rc < 0)
         FAIL("Cannot read dbus messge: %s\n", strerror(-rc));
 
     /* Reload daemon services for specific bus type and conditionally redraw screen) */
@@ -1143,7 +1144,7 @@ int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err)
     rc = get_all_systemd_services(system);
     if (rc < 0)
         FAIL("Cannot reload system units: %s\n", strerror(-rc));
-    
+
     if ((system && is_system) || (!system && !is_system)) {
         print_services();
         clrtobot();
@@ -1227,18 +1228,18 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
 
     /* Message format: sa{sv}as */
 
-    if (sd_bus_error_is_set(err)) 
+    if (sd_bus_error_is_set(err))
         FAIL("Changed unit callback failed: %s\n", err->message);
 
     /* s: Interface name */
     rc = sd_bus_message_read(reply, "s", &iface);
-    if (rc < 0) 
+    if (rc < 0)
         FAIL("Cannot read dbus messge: %s\n", strerror(-rc));
 
     /* If the interface is not a unit, we dont care */
-    if (strcmp(iface, SD_IFACE("Unit")) != 0) 
+    if (strcmp(iface, SD_IFACE("Unit")) != 0)
         goto fin;
-    
+
     /* a: Array of dictionaries */
     rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
     if (rc < 0)
@@ -1248,12 +1249,12 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
     while (true) {
 	/* {..}: Dictionary itself */
         rc = sd_bus_message_enter_container(reply, 'e', "sv");
-        if (rc < 0) 
+        if (rc < 0)
             FAIL("Cannot read dict item in dbus message: %s\n", strerror(-rc));
 
         /* No more array entries to read */
         if (rc == 0)
-            break; 
+            break;
 
         svc->changed += update_service_property(svc, reply);
         if (svc->changed) {
@@ -1296,7 +1297,7 @@ fin:
 int get_all_systemd_services(bool is_system) {
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message *reply = NULL;    
+    sd_bus_message *reply = NULL;
     int r = 0;
     int *total_types = NULL;
     uint64_t now = get_now();
@@ -1337,7 +1338,7 @@ int get_all_systemd_services(bool is_system) {
         char unit_state[UNIT_PROPERTY_SZ] = {0};
         Service *svc = NULL;
 
-        r = sd_bus_message_read(reply, "(ssssssouso)", 
+        r = sd_bus_message_read(reply, "(ssssssouso)",
                                 &unit, &description, &load, &active, &sub,
                                 NULL, &object, NULL, NULL, NULL);
         if (r < 0)
@@ -1356,7 +1357,7 @@ int get_all_systemd_services(bool is_system) {
             sd_bus_unref(bus);
             return -1;
         }
-        
+
         svc->last_update = now;
         strncpy(svc->unit, unit, sizeof(svc->unit) - 1);
         if (strcmp(svc->load, load))
@@ -1386,7 +1387,7 @@ int get_all_systemd_services(bool is_system) {
 
         if (is_new) {
             /* Register interest in events on this object */
-            r = sd_bus_match_signal(bus, 
+            r = sd_bus_match_signal(bus,
                                     &svc->slot,
                                     SD_DESTINATION,
                                     object,
@@ -1456,7 +1457,7 @@ int print_s(Service *svc, int row)
     if (modus != ALL && modus != svc->type)
         return 0;
     // if the unit name is too long, truncate it and add ...
-    if(strlen(svc->unit) >= XLOAD -3) {     
+    if(strlen(svc->unit) >= XLOAD -3) {
         char short_unit[XLOAD - 2];
         strncpy(short_unit, svc->unit, XLOAD - 2);
         mvaddstr(row + 4, 1, short_unit);
@@ -1476,7 +1477,7 @@ int print_s(Service *svc, int row)
     {
         mvprintw(row + 4, XLOAD, "%s", strlen(svc->unit_file_state) ? svc->unit_file_state : svc->load);
     }
-    
+
     mvprintw(row + 4, XACTIVE, "%s", svc->active);
     mvprintw(row + 4, XSUB, "%s", svc->sub);
     // if the description is too long, truncate it and add ...
@@ -1546,7 +1547,7 @@ void print_services()
     services_invalidate_ypos();
 
     svc = service_nth(index_start);
-    while (svc) {    
+    while (svc) {
         if (row >= max_rows)
 	    break;
 
@@ -1568,7 +1569,7 @@ void print_text_and_lines()
     char tmptype[16] = {0};
     int *total_types = NULL;
     total_types = is_system ? total_system_types : total_user_types;
-    
+
     attroff(COLOR_PAIR(9));
     border(0, 0, 0, 0, 0, 0, 0, 0);
 
@@ -1577,7 +1578,7 @@ void print_text_and_lines()
     mvaddstr(1, 1, headline);
     attroff(COLOR_PAIR(8));
 
-    attron(COLOR_PAIR(9));        
+    attron(COLOR_PAIR(9));
     mvaddstr(1, strlen(headline) + 2, FUNCTIONS);
     attroff(COLOR_PAIR(9));
 
@@ -1959,7 +1960,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
             service_refresh_row(svc);
             svc->changed = 0;
 	}
-       
+
         if(index_start < 0)
             index_start = 0;
 
@@ -2081,9 +2082,9 @@ int main()
 
     modus = SERVICE;
 
-    position = 0;  
+    position = 0;
     index_start = 0;
-    
+
     init_screen();
 
     if (sd_bus_default_system(&sys) < 0)
