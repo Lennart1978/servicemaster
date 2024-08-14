@@ -6,6 +6,6 @@ ncurses_dep = dependency('ncurses')
 systemd_dep = dependency('libsystemd')
 
 executable('servicemaster',
-  'main.c',
+  'servicemaster.c',
   dependencies : [ncurses_dep, systemd_dep],
   install : true)

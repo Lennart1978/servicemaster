@@ -1,99 +1,19 @@
-#include <ncurses.h>
-#include <systemd/sd-event.h>
-#include <systemd/sd-bus.h>
-#include <systemd/sd-journal.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-#include <limits.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <unistd.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/queue.h>
-
-#define VERSION "1.3"
-#define FUNCTIONS     "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
-#define SERVICE_TYPES "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT"
-
-#define SD_DESTINATION "org.freedesktop.systemd1"
-#define SD_IFACE(x)    "org.freedesktop.systemd1." x
-#define SD_OPATH       "/org/freedesktop/systemd1"
-#define FAIL(...) {\
-    endwin();\
-    fprintf(stderr, __VA_ARGS__);\
-    exit(EXIT_FAILURE);\
-}
-
-#define KEY_RETURN 10
-#define KEY_ESC 27
-#define KEY_SPACE 32
-#define XLOAD 104
-#define XACTIVE 114
-#define XSUB 124
-#define XDESCRIPTION 134
-#define CHARS_UNIT 134
-#define CHARS_LOAD 10
-#define CHARS_ACTIVE 10
-#define CHARS_SUB 10
-#define CHARS_DESCRIPTION 100
-#define CHARS_STATUS 256
-#define CHARS_OBJECT 512
-#define UNIT_PROPERTY_SZ 256
-#define INVOCATION_SZ 33
+#include "servicemaster.h"
 
 struct Service;
 typedef struct Service Service;
-
-
-void print_services();
-void print_text_and_lines();
-void get_unit_file_state(Service *svc, bool system);
-int get_all_systemd_services(bool system);
-
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
                      " only user user units.\nPress Return to display unit status information.\nUse left/right to toggle modes and arrow up/down, page up/down"
                      " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
                      "The program reacts immediately to unit changes from outside (DBus).\n"
                      "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: "VERSION;
-
+                     "https://github.com/lennart1978/servicemaster\nVersion: " VERSION;
 const char *intro_title = "A quick introduction to ServiceMaster:";
 
 int maxx, maxy, position, index_start;
 size_t maxx_description;
 bool is_system = false;
 bool system_only = false;
-
-enum Operations {
-    START,
-    STOP,
-    RESTART,
-    ENABLE,
-    DISABLE,
-    MASK,
-    UNMASK,
-    RELOAD,
-    MAX_OPERATIONS
-};
-
-enum Type {
-    ALL,
-    DEVICE,
-    SLICE,
-    SERVICE,
-    SOCKET,
-    TARGET,
-    TIMER,
-    MOUNT,
-    SCOPE,
-    AUTOMOUNT,
-    SWAP,
-    PATH,
-    SNAPSHOT,
-    MAX_TYPES
-};
 
 const char * str_types[] = {
     "all",
@@ -122,47 +42,6 @@ const char *str_operations[] = {
     "ReloadUnit"
 };
 
-typedef struct Service {
-    int ypos;
-    int changed;
-    uint64_t last_update;
-
-    char unit[CHARS_UNIT];
-    char load[CHARS_LOAD];
-    char active[CHARS_ACTIVE];
-    char sub[CHARS_SUB];
-    char description[CHARS_DESCRIPTION];
-    char object[CHARS_OBJECT];
-    char fragment_path[UNIT_PROPERTY_SZ];
-    char unit_file_state[UNIT_PROPERTY_SZ];
-    char invocation_id[INVOCATION_SZ];
-
-    uint64_t exec_main_start;
-    uint32_t main_pid;
-    uint64_t tasks_current;
-    uint64_t tasks_max;
-    uint64_t memory_current;
-    uint64_t memory_peak;
-    uint64_t swap_current;
-    uint64_t swap_peak;
-    uint64_t zswap_current;
-    uint64_t zswap_peak;
-    uint64_t cpu_usage;
-    char cgroup[UNIT_PROPERTY_SZ];
-
-    char sysfs_path[UNIT_PROPERTY_SZ];     // For DEVICE
-    char mount_where[UNIT_PROPERTY_SZ];    // For MOUNT
-    char mount_what[UNIT_PROPERTY_SZ];     // For MOUNT
-    uint64_t next_elapse;                  // For TIMER
-    char bind_ipv6_only[UNIT_PROPERTY_SZ]; // For SOCKET
-    uint32_t backlog;                      // For SOCKET
-
-    enum Type type;
-    sd_bus_slot *slot;
-
-    TAILQ_ENTRY(Service) e;
-} Service;
-
 TAILQ_HEAD(service_list, Service);
 
 struct service_list system_services = TAILQ_HEAD_INITIALIZER(system_services);
@@ -173,13 +52,20 @@ int total_system_types[MAX_TYPES];
 
 enum Type modus;
 
+/**
+ * Initializes a new Service struct and returns a pointer to it.
+ *
+ * This function allocates memory for a new Service struct and returns a pointer to it.
+ * The struct is initialized with all fields set to 0 or NULL.
+ *
+ * @return A pointer to the newly initialized Service struct.
+ */
 static inline Service * service_init(void) {
     Service *svc = NULL;
     svc = calloc(1, sizeof(Service));
 
     return svc;
 }
-
 /* Return the nth service in the list, accounting for the enabled
  * filter */
 static inline Service * service_nth(int n) {
@@ -196,7 +82,6 @@ static inline Service * service_nth(int n) {
     }
     return TAILQ_FIRST(list);
 }
-
 /**
  * Finds the service with the specified y-position in the service list.
  *
@@ -214,8 +99,6 @@ static inline Service * service_ypos(int ypos) {
     }
     return NULL;
 }
-
-
 /* Insert service into the list in a sorted order */
 static inline void service_insert(Service *svc, bool is_system) {
     int *total_types = NULL;
@@ -245,7 +128,6 @@ static inline void service_insert(Service *svc, bool is_system) {
     /* This item is the lexicographically greatest, put in tail */
     TAILQ_INSERT_TAIL(list, svc, e);
 }
-
 /* Return the service that matches this unit name */
 static inline Service * service_get_name(const char *name, bool is_system)
 {
@@ -260,6 +142,15 @@ static inline Service * service_get_name(const char *name, bool is_system)
     return NULL;
 }
 
+/**
+ * Refreshes the display row for the given service.
+ *
+ * If the service is currently displayed on the screen, this function will
+ * clear the row for the service and redraw it to ensure the display is
+ * up-to-date.
+ *
+ * @param svc The service to refresh the display row for.
+ */
 static inline void service_refresh_row(Service *svc)
 {
     /* If the service is on the screen, invalidate the row so it refreshes
@@ -272,7 +163,6 @@ static inline void service_refresh_row(Service *svc)
         wmove(stdscr, y, x);
     }
 }
-
 /**
  * Removes all services from the service list.
  *
@@ -295,7 +185,6 @@ static inline void services_empty(void)
 	free(svc);
     }
 }
-
 /* Iterate through the list, remove any that haven't been updated since
  * timestamp */
 static inline void services_prune_dead_units(bool is_system, uint64_t ts)
@@ -329,7 +218,6 @@ static inline void services_prune_dead_units(bool is_system, uint64_t ts)
         erase();
     return;
 }
-
 /* This is used during the print services routine
  * to reset the y positions on all services, since not
  * every service is displayed at once. */
@@ -343,6 +231,11 @@ static inline void services_invalidate_ypos(void) {
     }
 }
 
+/**
+ * Gets the current monotonic timestamp.
+ *
+ * @return The current monotonic timestamp.
+ */
 uint64_t get_now()
 {
     sd_event *ev = NULL;
@@ -361,7 +254,6 @@ uint64_t get_now()
 
     return now;
 }
-
 /**
  * Centers the given text by adding spaces to the beginning and end of each line to make the text centered.
  *
@@ -422,7 +314,6 @@ char* center(const char *text) {
     free(input);
     return result;
 }
-
 /**
  * Displays a status window with the provided status message and title.
  *
@@ -518,7 +409,6 @@ void show_status_window(const char *status, const char *title) {
     delwin(win);
     refresh();
 }
-
 /**
  * Perform a systemd operation on a given unit.
  *
@@ -609,7 +499,11 @@ finish:
 
     return r >= 0;
 }
-
+/**
+ * Checks if the current process is running as the root user.
+ *
+ * @return true if the process is running as root, false otherwise.
+ */
 bool is_root() {
     uid_t uid;
     uid = geteuid();
@@ -617,7 +511,6 @@ bool is_root() {
         return true;
     return false;
 }
-
 /**
  * Retrieves a unit property from the D-Bus interface.
  *
@@ -673,7 +566,6 @@ fail:
     sd_bus_message_unref(reply);
     return false;
 }
-
 /**
  * Formats the status of a service unit.
  *
@@ -787,7 +679,6 @@ char* format_unit_status(Service *svc) {
         return NULL;
     return out;
 }
-
 /**
  * Retrieves the logs for a given service unit.
  *
@@ -907,7 +798,6 @@ fail:
     sd_journal_close(j);
     return NULL;
 }
-
 /**
  * Retrieves the invocation ID for the specified system or user service unit.
  *
@@ -960,7 +850,6 @@ fail:
     sd_bus_message_unref(reply);
     return false;
 }
-
 /**
  * Retrieves the status information for the specified system or user service unit.
  *
@@ -1044,7 +933,6 @@ fin:
     free(logs);
     return out;
 }
-
 /**
  * Compares two Service structs based on the unit field in a case-insensitive manner.
  *
@@ -1060,7 +948,6 @@ int compare_services(const void* a, const void* b)
     Service* serviceB = (Service*)b;
     return strcasecmp(serviceA->unit, serviceB->unit);
 }
-
 /**
  * Checks if the given unit string has the specified file extension.
  *
@@ -1082,7 +969,6 @@ int test_unit_extension(const char* unit, const char* extension)
     }
     return 0;
 }
-
 /**
  * Checks if a given systemd unit type is considered "enableable", meaning it can be enabled or disabled.
  * The function checks the unit name against a list of known enableable unit types.
@@ -1102,10 +988,8 @@ bool is_enableable_unit_type(const char *unit) {
 
     return false;
 }
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-
 /**
  * Handles the daemon reload callback from the D-Bus message.
  * This function is called when the systemd daemon has been reloaded.
@@ -1156,7 +1040,6 @@ fin:
     sd_bus_error_free(err);
     return 0;
 }
-
 /**
  * Updates a specific property of a service based on the received D-Bus message.
  *
@@ -1206,7 +1089,6 @@ static int update_service_property(Service *svc, sd_bus_message *reply)
 
     return 0;
 }
-
 /**
  * Callback function that handles changes to a systemd service.
  *
@@ -1281,7 +1163,6 @@ fin:
     return 0;
 }
 #pragma GCC diagnostic pop
-
 /**
  * Retrieves a list of all systemd services on the system.
  *
@@ -1414,7 +1295,6 @@ int get_all_systemd_services(bool is_system) {
     sd_bus_unref(bus);
     return total_types[ALL];
 }
-
 /**
  * Clears the screen, ends the ncurses window, and exits the program with a status of 0.
  * This function should be called when the program needs to terminate, such as when the user
@@ -1426,7 +1306,6 @@ void quit()
     endwin();
     exit(EXIT_SUCCESS);
 }
-
 /**
  * Prints the service information for the specified index and row.
  *
@@ -1493,7 +1372,6 @@ int print_s(Service *svc, int row)
     svc->ypos = row + 4;
     return 1;
 }
-
 /**
  * Initializes the screen for the application.
  * This function sets up the ncurses environment, configures the terminal, and
@@ -1530,7 +1408,6 @@ void init_screen()
     border(0, 0, 0, 0, 0, 0, 0, 0);
     refresh();
 }
-
 /**
  * Prints the list of services based on the current display mode (modus).
  * This function iterates through the list of filtered services and prints them
@@ -1555,7 +1432,6 @@ void print_services()
 	svc = TAILQ_NEXT(svc, e);
     }
 }
-
 /**
  * Prints the text and lines for the main user interface.
  * This function is responsible for rendering the header, function keys, and mode indicators
@@ -1620,7 +1496,6 @@ void print_text_and_lines()
     mvvline(2, XDESCRIPTION -1, ACS_VLINE, maxy - 3);
     refresh();
 }
-
 /**
  * Handles user input and performs various operations on systemd services.
  * This function is responsible for:
@@ -1651,7 +1526,6 @@ void wait_input()
     sd_event_unref(ev);
     return;
 }
-
 /**
  * Retrieves the unit file state for the given service.
  *
@@ -1703,49 +1577,8 @@ void get_unit_file_state(Service *svc, bool is_system)
     sd_bus_message_unref(reply);
     sd_bus_error_free(&error);
 }
-
-/**
- * Handles user input and performs various operations on systemd services.
- * This function is responsible for:
- * - Handling user input from the keyboard, including navigation, service operations, and mode changes
- * - Updating the display based on the current state and user actions
- * - Calling appropriate functions to perform service operations (start, stop, restart, etc.)
- * - Reloading the service list when necessary
-*/
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#define NO_STATUS "No status information available."
-
-#define MODE(mode) {\
-    position = 0;\
-    index_start = 0;\
-    modus = mode;\
-    clear();\
-}
-
-/**
- * Performs a systemd operation (start, stop, restart, etc.) on a service.
- * This macro checks if the operation is being performed on a system unit and the
- * user is not root, in which case it displays a status message and breaks out
- * of the operation. Otherwise, it retrieves the service at the current cursor
- * position, calls the `start_operation()` function to perform the requested
- * operation, and displays a status message if the operation fails.
- *
- * @param mode The systemd operation to perform (e.g. "start", "stop", "restart").
- * @param txt A string describing the operation (e.g. "Start", "Stop", "Restart").
- */
-#define SD_OPERATION(mode, txt) {\
-    bool success = false;\
-    if(is_system && !is_root()) {\
-        show_status_window(" You must be root for this operation on system units. Press space to toggle: System/User.", "("txt")info:");\
-        break;\
-    }\
-    svc = service_ypos(position + 4);\
-    success = start_operation(svc->unit, mode);\
-    if (!success)\
-        show_status_window("Command could not be executed on this unit.", txt":");\
-}
-
 /**
  * Handles user input and performs various operations on systemd services.
  * This function is responsible for:
@@ -1987,7 +1820,6 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 #undef SD_OPERATION
 #undef MODE
 #pragma GCC diagnostic pop
-
 /* Configures initial dbus needed for long running systemd event handling */
 void setup_dbus(sd_bus *bus)
 {
@@ -2035,7 +1867,6 @@ void setup_dbus(sd_bus *bus)
 
     sd_bus_error_free(&error);
 }
-
 /* Initializes the event loop and sets up the handlers for
  * recieving input */
 void setup_event_loop()
@@ -2062,7 +1893,6 @@ void setup_event_loop()
         exit(EXIT_FAILURE);
     }
 }
-
 /**
  * The main entry point of the application.
  * This function initializes the screen, retrieves all systemd services,
