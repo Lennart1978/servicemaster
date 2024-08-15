@@ -13,26 +13,14 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 
-#define VERSION "1.3"
-#define FUNCTIONS     "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
-#define SERVICE_TYPES "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT"
-
+#define VERSION        "1.3"
+#define FUNCTIONS      "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
+#define SERVICE_TYPES  "A:ALL D:DEV I:SLICE S:SERVICE O:SOCKET T:TARGET R:TIMER M:MOUNT C:SCOPE N:AMOUNT W:SWAP P:PATH H:SSHOT"
+#define NO_STATUS      "No status information available."
 #define SD_DESTINATION "org.freedesktop.systemd1"
 #define SD_IFACE(x)    "org.freedesktop.systemd1." x
 #define SD_OPATH       "/org/freedesktop/systemd1"
-/**
- * Macro that prints an error message to stderr and exits the program with a failure status.
- *
- * This macro is used to handle fatal errors in the program. It prints the provided error message to stderr and then
- * exits the program with the EXIT_FAILURE status code.
- *
- * @param ... The format string and arguments for the error message to print.
- */
-#define FAIL(...) {\
-    endwin();\
-    fprintf(stderr, __VA_ARGS__);\
-    exit(EXIT_FAILURE);\
-}
+
 #define KEY_RETURN 10
 #define KEY_ESC 27
 #define KEY_SPACE 32
@@ -49,7 +37,19 @@
 #define CHARS_OBJECT 512
 #define UNIT_PROPERTY_SZ 256
 #define INVOCATION_SZ 33
-#define NO_STATUS "No status information available."
+/**
+ * Macro that prints an error message to stderr and exits the program with a failure status.
+ *
+ * This macro is used to handle fatal errors in the program. It prints the provided error message to stderr and then
+ * exits the program with the EXIT_FAILURE status code.
+ *
+ * @param ... The format string and arguments for the error message to print.
+ */
+#define FAIL(...) {\
+    endwin();\
+    fprintf(stderr, __VA_ARGS__);\
+    exit(EXIT_FAILURE);\
+}
 /**
  * Sets the current position, index start, and mode for the service display.
  * This function is used to reset the service display to a known state.
