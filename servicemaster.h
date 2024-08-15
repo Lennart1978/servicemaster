@@ -171,7 +171,6 @@ int compare_services(const void* a, const void* b);
 int test_unit_extension(const char* unit, const char* extension);
 bool is_enableable_unit_type(const char *unit);
 int daemon_reloaded(sd_bus_message *reply, void *data, sd_bus_error *err);
-static int update_service_property(Service *svc, sd_bus_message *reply);
 int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err);
 int get_all_systemd_services(bool is_system);
 void quit();
