@@ -141,7 +141,6 @@ static inline Service * service_get_name(const char *name, bool is_system)
     }
     return NULL;
 }
-
 /**
  * Refreshes the display row for the given service.
  *
@@ -446,8 +445,8 @@ bool start_operation(const char* unit, enum Operations operation) {
 
     if (operation < START || operation >= MAX_OPERATIONS) {
         sd_bus_unref(bus);
-	show_status_window("Invalid operation", "Error:");
-	return false;
+	    show_status_window("Invalid operation", "Error:");
+	    return false;
     }
     method = str_operations[operation];
 
@@ -1426,10 +1425,10 @@ void print_services()
     svc = service_nth(index_start);
     while (svc) {
         if (row >= max_rows)
-	    break;
+	        break;
 
         row += print_s(svc, row);
-	svc = TAILQ_NEXT(svc, e);
+	    svc = TAILQ_NEXT(svc, e);
     }
 }
 /**
@@ -1555,7 +1554,7 @@ void get_unit_file_state(Service *svc, bool is_system)
                             "GetUnitFileState",
                             &error,
                             &reply,
-			    "s",
+			                "s",
                             svc->unit);
     if (rc < 0) {
         if (-rc == ENOENT || -rc == ENOLINK)
@@ -1568,7 +1567,7 @@ void get_unit_file_state(Service *svc, bool is_system)
 
     rc = sd_bus_message_read(reply, "s", &state);
     if (rc < 0)
-	FAIL("Bad response reading message reply: %s\n", strerror(-rc));
+	    FAIL("Bad response reading message reply: %s\n", strerror(-rc));
 
     memset(svc->unit_file_state, 0, UNIT_PROPERTY_SZ);
     strncpy(svc->unit_file_state, state, UNIT_PROPERTY_SZ);
@@ -1614,9 +1613,12 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
         bool update_state = false;
 
         if (c == ERR)
+        {
             return 0;
+        }
 
-	max_services = total_types[modus];
+	    max_services = total_types[modus];
+
         switch(tolower(c))
         {
             case KEY_UP:
@@ -1660,9 +1662,10 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                     clear();
                 }
                 break;
+                
             case KEY_LEFT:
                 if(modus > ALL)
-		    MODE(modus-1);
+		            MODE(modus-1);
                 break;
 
             case KEY_RIGHT:
@@ -1672,13 +1675,13 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
             case KEY_SPACE:
                 if (system_only)
-	            break;
+	                break;
                 is_system ^= 0x1;
-		clear();
+		        clear();
                 break;
 
-	    case KEY_RETURN:
-		svc = service_ypos(position + 4);
+	        case KEY_RETURN:
+		        svc = service_ypos(position + 4);
                 clear();
                 if(position < 0)
                     break;
@@ -1785,14 +1788,14 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 continue;
         }
 
-	if (update_state)
-	    get_unit_file_state(svc, is_system);
+	    if (update_state)
+	        get_unit_file_state(svc, is_system);
 
         /* redraw any lines we have invalidated */
-	if (update_state) {
+	    if (update_state) {
             service_refresh_row(svc);
             svc->changed = 0;
-	}
+	    }
 
         if(index_start < 0)
             index_start = 0;
