@@ -77,7 +77,8 @@ static inline Service * service_nth(int n) {
     TAILQ_FOREACH(svc, list, e) {
         if (i == n)
             return svc;
-	if (svc->type == modus || modus == ALL)
+
+        if (svc->type == modus || modus == ALL)
             i++;
     }
     return TAILQ_FIRST(list);
@@ -121,8 +122,8 @@ static inline void service_insert(Service *svc, bool is_system) {
         if (strcmp(svc->object, node->object) > 0)
             continue;
 
-	TAILQ_INSERT_BEFORE(node, svc, e);
-	return;
+        TAILQ_INSERT_BEFORE(node, svc, e);
+        return;
     }
 
     /* This item is the lexicographically greatest, put in tail */
@@ -154,13 +155,15 @@ static inline void service_refresh_row(Service *svc)
 {
     /* If the service is on the screen, invalidate the row so it refreshes
      * correctly */
-    if (svc->ypos > -1) {
-        int x, y;
-        getyx(stdscr, y, x);
-        wmove(stdscr, svc->ypos, XLOAD);
-        wclrtoeol(stdscr);
-        wmove(stdscr, y, x);
-    }
+    int x, y;
+
+    if (svc->ypos < 0)
+        return;
+
+    getyx(stdscr, y, x);
+    wmove(stdscr, svc->ypos, XLOAD);
+    wclrtoeol(stdscr);
+    wmove(stdscr, y, x);
 }
 /**
  * Removes all services from the service list.
@@ -180,8 +183,8 @@ static inline void services_empty(void)
     while (!TAILQ_EMPTY(list)) {
         svc = TAILQ_FIRST(list);
         TAILQ_REMOVE(list, svc, e);
-	sd_bus_slot_unref(svc->slot);
-	free(svc);
+        sd_bus_slot_unref(svc->slot);
+        free(svc);
     }
 }
 /* Iterate through the list, remove any that haven't been updated since
@@ -445,8 +448,8 @@ bool start_operation(const char* unit, enum Operations operation) {
 
     if (operation < START || operation >= MAX_OPERATIONS) {
         sd_bus_unref(bus);
-	    show_status_window("Invalid operation", "Error:");
-	    return false;
+        show_status_window("Invalid operation", "Error:");
+        return false;
     }
     method = str_operations[operation];
 
@@ -910,7 +913,7 @@ char* get_status_info(Service *svc) {
         case SWAP:
         case SNAPSHOT:
             break;
-	default:
+        default:
             break;
     }
 
@@ -1077,7 +1080,7 @@ static int update_service_property(Service *svc, sd_bus_message *reply)
         rc = sd_bus_message_read(reply, "v", "s", &str);
         if (rc < 0)
             FAIL("Cannot fetch value from dictionary: %s\n", strerror(-rc));
-	strncpy(svc->sub, str, CHARS_SUB);
+        strncpy(svc->sub, str, CHARS_SUB);
 
         return 1;
     }
@@ -1128,7 +1131,7 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
 
     /* Array of dictionaries */
     while (true) {
-	/* {..}: Dictionary itself */
+        /* {..}: Dictionary itself */
         rc = sd_bus_message_enter_container(reply, 'e', "sv");
         if (rc < 0)
             FAIL("Cannot read dict item in dbus message: %s\n", strerror(-rc));
@@ -1151,7 +1154,7 @@ int changed_unit(sd_bus_message *reply, void *data, sd_bus_error *err)
 
     /* Redraw screen if something changed */
     if (svc->changed) {
-	svc->changed = 0;
+        svc->changed = 0;
         print_services();
         print_text_and_lines();
         refresh();
@@ -1224,7 +1227,7 @@ int get_all_systemd_services(bool is_system) {
         if (r < 0)
             FAIL("Cannot read DBUS message to get system services: %s\n", strerror(-r));
         if (r == 0)
-	    break;
+            break;
 
         svc = service_get_name(unit, is_system);
         if (!svc) {
@@ -1425,10 +1428,10 @@ void print_services()
     svc = service_nth(index_start);
     while (svc) {
         if (row >= max_rows)
-	        break;
+            break;
 
         row += print_s(svc, row);
-	    svc = TAILQ_NEXT(svc, e);
+        svc = TAILQ_NEXT(svc, e);
     }
 }
 /**
@@ -1554,7 +1557,7 @@ void get_unit_file_state(Service *svc, bool is_system)
                             "GetUnitFileState",
                             &error,
                             &reply,
-			                "s",
+                            "s",
                             svc->unit);
     if (rc < 0) {
         if (-rc == ENOENT || -rc == ENOLINK)
@@ -1567,7 +1570,7 @@ void get_unit_file_state(Service *svc, bool is_system)
 
     rc = sd_bus_message_read(reply, "s", &state);
     if (rc < 0)
-	    FAIL("Bad response reading message reply: %s\n", strerror(-rc));
+        FAIL("Bad response reading message reply: %s\n", strerror(-rc));
 
     memset(svc->unit_file_state, 0, UNIT_PROPERTY_SZ);
     strncpy(svc->unit_file_state, state, UNIT_PROPERTY_SZ);
@@ -1617,7 +1620,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
             return 0;
         }
 
-	    max_services = total_types[modus];
+        max_services = total_types[modus];
 
         switch(tolower(c))
         {
@@ -1665,7 +1668,7 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 
             case KEY_LEFT:
                 if(modus > ALL)
-		            MODE(modus-1);
+                    MODE(modus-1);
                 break;
 
             case KEY_RIGHT:
@@ -1675,13 +1678,13 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
 
             case KEY_SPACE:
                 if (system_only)
-	                break;
+                    break;
                 is_system ^= 0x1;
-		        clear();
+                clear();
                 break;
 
-	        case KEY_RETURN:
-		        svc = service_ypos(position + 4);
+            case KEY_RETURN:
+                svc = service_ypos(position + 4);
                 clear();
                 if(position < 0)
                     break;
@@ -1788,14 +1791,14 @@ int key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data)
                 continue;
         }
 
-	    if (update_state)
-	        get_unit_file_state(svc, is_system);
+        if (update_state)
+            get_unit_file_state(svc, is_system);
 
         /* redraw any lines we have invalidated */
-	    if (update_state) {
+        if (update_state) {
             service_refresh_row(svc);
             svc->changed = 0;
-	    }
+        }
 
         if(index_start < 0)
             index_start = 0;
