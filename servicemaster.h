@@ -157,15 +157,6 @@ typedef struct Service {
     TAILQ_ENTRY(Service) e;
 } Service;
 
-static inline Service * service_init(void);
-static inline Service * service_nth(int n);
-static inline Service * service_ypos(int ypos);
-static inline void service_insert(Service *svc, bool is_system);
-static inline Service * service_get_name(const char *name, bool is_system);
-static inline void service_refresh_row(Service *svc);
-static inline void services_empty(void);
-static inline void services_prune_dead_units(bool is_system, uint64_t ts);
-static inline void services_invalidate_ypos(void);
 uint64_t get_now();
 char* center(const char *text);
 void show_status_window(const char *status, const char *title);
