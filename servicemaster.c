@@ -3,12 +3,12 @@
 struct Service;
 typedef struct Service Service;
 const char *introduction = "Press Space to switch between system and user systemd units.\nFor security reasons, only root can manipulate system units and"
-                     " only user user units.\nPress Return to display unit status information.\nUse left/right to toggle modes and arrow up/down, page up/down"
-                     " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
-                     "The program reacts immediately to unit changes from outside (DBus).\n"
-                     "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
-                     "https://github.com/lennart1978/servicemaster\nVersion: " VERSION;
-const char *intro_title = "A quick introduction to ServiceMaster:";
+                           " only user user units.\nPress Return to display unit status information.\nUse left/right to toggle modes and arrow up/down, page up/down"
+                           " to select units.\nPress the F keys to manipulate the units and ESC or Q to exit the program.\n"
+                           "The program reacts immediately to unit changes from outside (DBus).\n"
+                           "--> PRESS ANY KEY TO CONTINUE <--\n\nHave fun !\n\nLennart Martens 2024\nLicense: MIT\nmonkeynator78@gmail.com\n"
+                           "https://github.com/lennart1978/servicemaster\nVersion: " VERSION;
+const char *intro_title =  "A quick introduction to ServiceMaster:";
 
 int maxx, maxy, position, index_start;
 size_t maxx_description;
