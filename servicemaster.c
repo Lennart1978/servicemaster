@@ -277,14 +277,20 @@ uint64_t get_now()
 char *center(const char *text)
 {
     char *result = NULL;
-    char *line, *saveptr;
+    char *line, *tokenContext;
     char *input = strdup(text);
     int max_line_length = 0;
     int total_length = 0;
     int line_count = 0;
 
-    line = strtok_r(input, "\n", &saveptr);
-    while (line != NULL)
+    if (!input)
+    {
+        errno = ENOMEM;
+        return NULL;
+    }
+
+    // Single pass to calculate lengths and count lines
+    for (line = strtok_r(input, "\n", &tokenContext); line; line = strtok_r(NULL, "\n", &tokenContext))
     {
         int len = strlen(line);
         if (len > max_line_length)
@@ -293,13 +299,14 @@ char *center(const char *text)
         }
         total_length += len + 1;
         line_count++;
-        line = strtok_r(NULL, "\n", &saveptr);
     }
 
-    result = (char *)malloc(total_length + line_count * max_line_length + 1);
+    // Tighter bound for result allocation
+    result = (char *)malloc(total_length + line_count * (max_line_length / 2 + 1) + 1);
     if (result == NULL)
     {
         free(input);
+        errno = ENOMEM;
         return NULL;
     }
 
