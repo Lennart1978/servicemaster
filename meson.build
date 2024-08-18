@@ -7,5 +7,9 @@ systemd_dep = dependency('libsystemd')
 
 executable('servicemaster',
   'servicemaster.c',
+  'sm_err.c',
+  'bus.c',
+  'display.c',
+  'service.c',
   dependencies : [ncurses_dep, systemd_dep],
   install : true)
