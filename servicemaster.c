@@ -38,7 +38,7 @@ int main()
         display_set_bus_type(USER);
     else
         display_set_bus_type(SYSTEM);
-
+  
     bus_init();
     display_init();
     display_redraw(bus_currently_displayed());
