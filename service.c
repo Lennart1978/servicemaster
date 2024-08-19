@@ -67,7 +67,7 @@ static void service_free(Service *svc)
  * @param lines The maximum number of log lines to retrieve.
  * @return A dynamically allocated string containing the formatted logs, or NULL on failure.
  */
-char * service_logs(Service *svc, int lines) {
+char *service_logs(Service *svc, int lines) {
     sd_journal *j;
     char *out = NULL;
     char *ptr = NULL;
@@ -88,15 +88,17 @@ char * service_logs(Service *svc, int lines) {
     logs = alloca(sizeof(struct logline) * lines);
     memset(logs, 0, sizeof(*logs) * lines);
 
-    r = sd_journal_open(&j, SD_JOURNAL_SYSTEM|SD_JOURNAL_CURRENT_USER);
-    if (r < 0)
+    r = sd_journal_open(&j, SD_JOURNAL_SYSTEM | SD_JOURNAL_CURRENT_USER);
+    if (r < 0) {
         sm_err_set("Cannot retrieve journal: %s", strerror(-r));
+        return NULL;
+    }
 
-    snprintf(match, 256, "_SYSTEMD_INVOCATION_ID=%s", svc->invocation_id);
+    snprintf(match, sizeof(match), "_SYSTEMD_INVOCATION_ID=%s", svc->invocation_id);
     sd_journal_add_match(j, match, 0);
 
     sd_journal_add_disjunction(j);
-    snprintf(match, 256, "USER_INVOCATION_ID=%s", svc->invocation_id);
+    snprintf(match, sizeof(match), "USER_INVOCATION_ID=%s", svc->invocation_id);
     sd_journal_add_match(j, match, 0);
 
     total = 0;
@@ -105,9 +107,9 @@ char * service_logs(Service *svc, int lines) {
         const char *val = NULL;
 
         if (left <= 0)
-                break;
+            break;
 
-        struct logline *ll = &logs[left-1];
+        struct logline *ll = &logs[left - 1];
 
         r = sd_journal_get_realtime_usec(j, &ll->stamp);
         if (r < 0)
@@ -116,51 +118,66 @@ char * service_logs(Service *svc, int lines) {
         r = sd_journal_get_data(j, "MESSAGE", (const void **)&val, &sz);
         if (r < 0)
             continue;
-        strncpy(ll->msg, val+8, sz-8);
-        total += sz;
+        strncpy(ll->msg, val + 8, sizeof(ll->msg) - 1);
+        ll->msg[sizeof(ll->msg) - 1] = '\0';  // Null termination
 
         r = sd_journal_get_data(j, "_HOSTNAME", (const void **)&val, &sz);
         if (r < 0)
             continue;
-        strncpy(ll->hostname, val+10, sz-10);
-        total += sz;
+        strncpy(ll->hostname, val + 10, sizeof(ll->hostname) - 1);
+        ll->hostname[sizeof(ll->hostname) - 1] = '\0';
 
         r = sd_journal_get_data(j, "SYSLOG_IDENTIFIER", (const void **)&val, &sz);
         if (r < 0)
             continue;
-        strncpy(ll->syslogident, val+18, sz-18);
-        total += sz;
+        strncpy(ll->syslogident, val + 18, sizeof(ll->syslogident) - 1);
+        ll->syslogident[sizeof(ll->syslogident) - 1] = '\0';
 
         r = sd_journal_get_data(j, "_PID", (const void **)&val, &sz);
         if (r < 0)
             continue;
-        strncpy(ll->pid, val+5, sz-5);
-        total += sz;
+        strncpy(ll->pid, val + 5, sizeof(ll->pid) - 1);
+        ll->pid[sizeof(ll->pid) - 1] = '\0';
 
         /* The 64 is to over-compensate for writing in the timestamp and whitespace later */
-        total += 64;
+        total += strlen(ll->msg) + strlen(ll->hostname) + strlen(ll->syslogident) + strlen(ll->pid) + 64;
+
         left--;
     }
 
-    if (!total)
+    if (total == 0)
         goto fin;
 
-    out = malloc(total);
-    ptr = out;
-    if (!out)
+    out = malloc(total + 1);  // +1 for Null termination
+    if (!out) {
         sm_err_set("Cannot create logs: %s", strerror(errno));
+        goto fin;
+    }
 
-    for (int i=left; i < lines; i++) {
+    ptr = out;
+    for (int i = left; i < lines; i++) {
         struct logline *ll = &logs[i];
         char strstamp[32] = {0};
 
         time_t t = (ll->stamp / 1000000);
         struct tm *tm = localtime(&t);
-        strftime(strstamp, 32, "%b %d %H:%M:%S", tm);
+        strftime(strstamp, sizeof(strstamp), "%b %d %H:%M:%S", tm);
 
-        ptr += snprintf(ptr, total - (ptr - out), "%s %s %s[%s]: %s\n",
-                        strstamp, ll->hostname, ll->syslogident, ll->pid, ll->msg);
+        int written = snprintf(ptr, total - (ptr - out), "%s %s %s[%s]: %s\n",
+                               strstamp, ll->hostname, ll->syslogident, ll->pid, ll->msg);
+
+        if (written < 0 || written >= total - (ptr - out)) {
+            // Error exception in case of write error or overflow
+            sm_err_set("Failed to write logs");
+            free(out);
+            out = NULL;
+            goto fin;
+        }
+
+        ptr += written;
     }
+
+    *ptr = '\0';  // Null termination
 
 fin:
     sd_journal_close(j);

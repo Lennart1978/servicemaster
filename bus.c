@@ -549,7 +549,6 @@ Bus * bus_currently_displayed(void)
 int bus_invocation_id(Bus *bus, Service *svc) {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = NULL;
-    char *ptr = NULL;
     uint8_t *id = NULL;
     size_t len = 0;
     int rc = 0;
@@ -562,15 +561,21 @@ int bus_invocation_id(Bus *bus, Service *svc) {
                     &error,
                     &reply,
                     "ay");
-    if (sd_bus_error_is_set(&error))
+    if (sd_bus_error_is_set(&error)) {
         sm_err_set("Cannot fetch invocation ID: %s", error.message);
+        return rc;
+    }
 
-    if (rc < 0)
+    if (rc < 0) {
         sm_err_set("Cannot fetch invocation ID: %s", strerror(-rc));
+        return rc;
+    }
 
     rc = sd_bus_message_read_array(reply, 'y', (const void **)&id, &len);
-    if (rc < 0)
+    if (rc < 0) {
         sm_err_set("Cannot fetch this invocation ID: %s", strerror(-rc));
+        return rc;
+    }
 
     /* There is no ID */
     if (len != 16) {
@@ -578,15 +583,37 @@ int bus_invocation_id(Bus *bus, Service *svc) {
         goto fin;
     }
 
-    ptr = svc->invocation_id;
-    for (size_t i=0; i < len; i++)
-        ptr += snprintf(ptr, 33 - (ptr - svc->invocation_id), "%hhx", id[i]);
+    char *ptr = svc->invocation_id;
+    size_t remaining = 32;  // Max length of invocation_id is 32 chars + 1 null terminator
+
+    for (size_t i = 0; i < len && remaining > 0; i++) {
+        int written = snprintf(ptr, remaining + 1, "%02hhx", id[i]);
+
+        if (written < 0) {
+            // write error
+            sm_err_set("Failed to write invocation ID");
+            strncpy(svc->invocation_id, "00000000000000000000000000000000", 33);
+            rc = -1;
+            goto fin;
+        }
+
+        if (written > (int)remaining) {
+            // The remaining buffer was not sufficient
+            break;
+        }
+
+        ptr += written;
+        remaining -= written;
+    }
+
+    *ptr = '\0';  // Null termination
 
 fin:
     sd_bus_message_unref(reply);
     sd_bus_error_free(&error);
     return rc;
 }
+
 
 void bus_fetch_service_status(Bus *bus, Service *svc)
 {
