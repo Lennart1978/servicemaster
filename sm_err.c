@@ -18,22 +18,28 @@ static void sm_err_print_err(const char *errstr)
     return;
 }
 
-void sm_err_window(const char *fmt, ...)
+static void sm_err_setv(const char *fmt, va_list *ap)
 {
     int rc;
-    va_list ap = {0};
-
-    va_start(ap, fmt);
 
     free(errbuf);
     errbuf = NULL;
 
-    rc = vasprintf(&errbuf, fmt, ap);
+    rc = vasprintf(&errbuf, fmt, *ap);
     if (rc < 0) {
-        va_end(ap);
         sm_err_print_err("Cannot allocate memory attempting to set an error!");
         exit(EXIT_FAILURE);
     }
+
+    return;
+}
+
+void sm_err_window(const char *fmt, ...)
+{
+    va_list ap = {0};
+
+    va_start(ap, fmt);
+    sm_err_setv(fmt, &ap);
     va_end(ap);
 
     display_status_window(errbuf, "Error");
@@ -43,25 +49,14 @@ void sm_err_window(const char *fmt, ...)
 
 void sm_err_set(const char *fmt, ...)
 {
-    int rc;
     va_list ap = {0};
 
     va_start(ap, fmt);
-
-    free(errbuf);
-    errbuf = NULL;
-
-    rc = vasprintf(&errbuf, fmt, ap);
-    if (rc < 0) {
-        va_end(ap);
-        sm_err_print_err("Cannot allocate memory attempting to set an error!");
-        exit(EXIT_FAILURE);
-    }
+    sm_err_setv(fmt, &ap);
+    va_end(ap);
 
     sm_err_print_err(errbuf);
-    va_end(ap);
     exit(1);
-    return;
 }
 
 const char * sm_err_get(void)

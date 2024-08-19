@@ -552,6 +552,8 @@ int bus_invocation_id(Bus *bus, Service *svc) {
     uint8_t *id = NULL;
     size_t len = 0;
     int rc = 0;
+    char *ptr = NULL;
+    size_t remaining = 32; /* Max length of invocation_id is 32 chars + 1 null terminator */
 
     rc = sd_bus_get_property(bus->bus,
                     SD_DESTINATION,
@@ -562,45 +564,43 @@ int bus_invocation_id(Bus *bus, Service *svc) {
                     &reply,
                     "ay");
     if (sd_bus_error_is_set(&error)) {
-        sm_err_set("Cannot fetch invocation ID: %s", error.message);
-        return rc;
+        sm_err_window("Cannot fetch invocation ID: %s", error.message);
+        goto fin;
     }
 
     if (rc < 0) {
-        sm_err_set("Cannot fetch invocation ID: %s", strerror(-rc));
-        return rc;
+        sm_err_window("Cannot fetch invocation ID: %s", strerror(-rc));
+        goto fin;
     }
 
     rc = sd_bus_message_read_array(reply, 'y', (const void **)&id, &len);
     if (rc < 0) {
-        sm_err_set("Cannot fetch this invocation ID: %s", strerror(-rc));
-        return rc;
+        sm_err_window("Cannot fetch this invocation ID: %s", strerror(-rc));
+        goto fin;
     }
 
     /* There is no ID */
     if (len != 16) {
+        rc = -1;
         strncpy(svc->invocation_id, "00000000000000000000000000000000", 33);
         goto fin;
     }
 
-    char *ptr = svc->invocation_id;
-    size_t remaining = 32;  // Max length of invocation_id is 32 chars + 1 null terminator
-
+    ptr = svc->invocation_id;
     for (size_t i = 0; i < len && remaining > 0; i++) {
         int written = snprintf(ptr, remaining + 1, "%02hhx", id[i]);
 
         if (written < 0) {
-            // write error
+            /* write error */
             sm_err_set("Failed to write invocation ID");
             strncpy(svc->invocation_id, "00000000000000000000000000000000", 33);
             rc = -1;
             goto fin;
         }
 
-        if (written > (int)remaining) {
-            // The remaining buffer was not sufficient
+        if (written > (int)remaining)
+            /* The remaining buffer was not sufficient */
             break;
-        }
 
         ptr += written;
         remaining -= written;
