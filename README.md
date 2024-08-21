@@ -45,7 +45,6 @@ Lennart Martens
 
 For bug reports, feature requests, or general inquiries:
 - Email: monkeynator78@gmail.com
-- GitHub: [https://github.com/lennart1978/servicemaster](https://github.com/lennart1978/servicemaster)
 
 ## Version
 
@@ -53,13 +52,12 @@ For bug reports, feature requests, or general inquiries:
 
 Build:
 ```bash
-mkdir builddir && meson setup builddir && cd builddir && meson compile
+mkdir builddir && meson setup -C builddir && meson compile -C builddir
 ```
-Run:
+Install:
 ```bash
-./servicemaster
+sudo meson install -C builddir
 ```
-Have fun !
 
 <img src="servicemaster.png" alt="SM-screenshot"></img>
 <img src="servicemaster-logo.jpeg" alt="SM-Logo"></img>

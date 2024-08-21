@@ -1,0 +1,66 @@
+.TH SERVICEMASTER 1 "August 2024" "ServiceMaster 1.4" "User Commands"
+.SH NAME
+ServiceMaster \- A powerful tool for managing systemd units.
+.SH SYNOPSIS
+.B servicemaster
+[\fIOPTION\fR]...
+.SH DESCRIPTION
+\fBServiceMaster\fR is a powerful terminal-based tool for managing systemd units on Linux systems. It provides an intuitive interface for viewing and controlling system and user units, making it easier to manage your units without leaving the command line.
+
+.SH FEATURES
+.IP \[bu] 2
+View all systemd units or filter by type (services, devices, sockets, etc.)
+.IP \[bu] 2
+Start, stop, restart, enable, disable, mask, and unmask units
+.IP \[bu] 2
+View detailed status information for each unit
+.IP \[bu] 2
+Switch between system and user units
+.IP \[bu] 2
+User-friendly ncurses interface with color-coded information
+.IP \[bu] 2
+Keyboard shortcuts for quick navigation and control
+.IP \[bu] 2
+DBus event loop: Reacts immediately to external changes to units
+
+.SH REQUIREMENTS
+.IP \[bu] 2
+Linux system with systemd
+.IP \[bu] 2
+NCurses library
+.IP \[bu] 2
+Systemd development libraries
+
+.SH USAGE
+After launching \fBServiceMaster\fR, you can use the following controls:
+.IP \[bu] 2
+Arrow keys, page up/down: Navigate through the list of units
+.IP \[bu] 2
+Space: Toggle between system and user units
+.IP \[bu] 2
+Enter: Show detailed status of the selected unit
+.IP \[bu] 2
+F1-F8: Perform actions (start, stop, restart, etc.) on the selected unit
+.IP \[bu] 2
+A-Z: Quick filter units by type
+.IP \[bu] 2
+Q or ESC: Quit the application
+
+.SH SECURITY NOTE
+For security reasons, only root can manipulate system units, and only user units can be manipulated when running as a regular user.
+
+.SH LICENSE
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+.SH AUTHOR
+Lennart Martens
+
+.SH CONTACT
+For bug reports, feature requests, or general inquiries:
+.IP \[bu] 2
+Email: monkeynator78@gmail.com
+.IP \[bu] 2
+GitHub: https://github.com/lennart1978/servicemaster
+
+.SH VERSION
+1.4
