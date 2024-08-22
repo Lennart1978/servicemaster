@@ -58,6 +58,8 @@ Install:
 ```bash
 sudo meson install -C builddir
 ```
-
+ServiceMaster in 'Kitty' terminal and 'Monokai' theme:
+<img src="sm-kitty-monokai.png" alt="SM-screenshot"></img>
+ServiceMaster in 'Kgx' standard Gnome terminal emulator:
 <img src="servicemaster.png" alt="SM-screenshot"></img>
 <img src="servicemaster-logo.jpeg" alt="SM-Logo"></img>
