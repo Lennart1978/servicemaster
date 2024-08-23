@@ -13,7 +13,7 @@ executable('servicemaster',
   'service.c',
   dependencies : [ncurses_dep, systemd_dep],
   install : true,
-  install_dir : '/usr/bin')
+  install_dir : get_option('prefix'))
 
 # Install the man page
 man1 = 'servicemaster.1'
