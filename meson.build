@@ -1,5 +1,5 @@
 project('ServiceMaster', 'c',
-  version : '1.4',
+  version : '1.4.1',
   default_options : ['warning_level=3', 'buildtype=release'])
 
 ncurses_dep = dependency('ncurses')
@@ -17,4 +17,4 @@ executable('servicemaster',
 
 # Install the man page
 man1 = 'servicemaster.1'
-install_man(man1, install_dir : join_paths(get_option('prefix'), 'share/man/man1'))
+install_man(man1, install_dir : '/usr/share/man/man1')
