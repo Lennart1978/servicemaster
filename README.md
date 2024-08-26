@@ -58,6 +58,9 @@ Install:
 ```bash
 sudo meson install -C builddir
 ```
+
+For Archlinux users: There is 'servicemaster-bin' in the AUR.
+
 ServiceMaster in 'Kitty' terminal and 'Monokai' theme:
 <img src="sm-kitty-monokai.png" alt="SM-screenshot"></img>
 ServiceMaster in 'Kgx' standard Gnome terminal emulator:
