@@ -52,7 +52,7 @@ For bug reports, feature requests, or general inquiries:
 
 Build:
 ```bash
-mkdir builddir && meson setup builddir --buildtype=release --prefix=/usr && meson compile -C builddir
+mkdir builddir && meson setup builddir --buildtype=release --prefix=/usr/bin && meson compile -C builddir
 ```
 Install:
 ```bash
