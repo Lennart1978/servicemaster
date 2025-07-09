@@ -1,5 +1,5 @@
 #ifndef _SM_ERR_H
-#define _SM_SRR_H
+#define _SM_ERR_H
 #include <errno.h>
 #include <stdarg.h>
 

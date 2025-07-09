@@ -65,6 +65,18 @@ static int bus_update_service_property(Service *svc, sd_bus_message *reply)
     return 0;
 }
 
+// Neue Hilfsfunktion: Service anhand des Objektpfads finden
+static Service *service_get_object(Bus *bus, const char *object)
+{
+    Service *svc = NULL;
+    TAILQ_FOREACH(svc, &bus->services, e)
+    {
+        if (svc->object && strcmp(svc->object, object) == 0)
+            return svc;
+    }
+    return NULL;
+}
+
 /**
  * Callback function that handles changes to a systemd service.
  *
@@ -80,61 +92,55 @@ static int bus_update_service_property(Service *svc, sd_bus_message *reply)
  */
 static int bus_unit_changed(sd_bus_message *reply, void *data, sd_bus_error *err)
 {
-    Service *svc = (Service *)data;
+    Bus *bus = (Bus *)data;
+    const char *object = sd_bus_message_get_path(reply);
     const char *iface = NULL;
     int rc;
+    Service *svc;
 
-    /* Message format: sa{sv}as */
+    if (!object)
+        return 0;
+
+    svc = service_get_object(bus, object);
+    if (!svc)
+        return 0;
 
     if (sd_bus_error_is_set(err))
         sm_err_set("Changed unit callback failed: %s\n", err->message);
 
-    /* s: Interface name */
     rc = sd_bus_message_read(reply, "s", &iface);
     if (rc < 0)
         sm_err_set("Cannot read dbus messge: %s\n", strerror(-rc));
 
-    /* If the interface is not a unit, we dont care */
     if (strcmp(iface, SD_IFACE("Unit")) != 0)
         goto fin;
 
-    /* a: Array of dictionaries */
     rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
     if (rc < 0)
         sm_err_set("Cannot read array in dbus message: %s\n", strerror(-rc));
 
-    /* Array of dictionaries */
     while (true)
     {
-        /* {..}: Dictionary itself */
         rc = sd_bus_message_enter_container(reply, 'e', "sv");
         if (rc < 0)
             sm_err_set("Cannot read dict item in dbus message: %s\n", strerror(-rc));
-
-        /* No more array entries to read */
         if (rc == 0)
             break;
-
         svc->changed += bus_update_service_property(svc, reply);
         if (svc->changed)
         {
             display_redraw_row(svc);
             svc->last_update = service_now();
         }
-
         if (sd_bus_message_exit_container(reply) < 0)
             sm_err_set("Cannot exit dictionary: %s\n", strerror(-rc));
     }
-
     sd_bus_message_exit_container(reply);
-
-    /* Redraw screen if something changed */
     if (svc->changed)
     {
         svc->changed = 0;
         display_redraw(bus_currently_displayed());
     }
-
 fin:
     sd_bus_error_free(err);
     return 0;
@@ -281,19 +287,6 @@ static int bus_update_service_entry(sd_bus_message *reply, struct bus_state *st,
         goto fin;
     }
 
-    /* Register interest in events on this object */
-    rc = sd_bus_match_signal(st->bus,
-                             &svc->slot,
-                             SD_DESTINATION,
-                             object,
-                             "org.freedesktop.DBus.Properties",
-                             "PropertiesChanged",
-                             bus_unit_changed,
-                             (void *)svc);
-    if (rc < 0)
-        sm_err_set("Cannot register interest changed units: %s\n", strerror(-rc));
-
-    // bus_update_unit_file_state(st, svc);
     service_insert(st, svc);
     rc = 1;
 
@@ -442,7 +435,22 @@ static int bus_setup_bus(struct bus_state *st)
         goto fin;
     }
 
-    // We care about the reloading signal/event
+    // Globaler Match für alle Units (Objektpfad auf NULL setzen)
+    rc = sd_bus_match_signal(st->bus,
+                             NULL,
+                             SD_DESTINATION,
+                             NULL, // Alle Objektpfade!
+                             "org.freedesktop.DBus.Properties",
+                             "PropertiesChanged",
+                             bus_unit_changed,
+                             (void *)st);
+    if (rc < 0)
+    {
+        sm_err_set("Cannot register global interest in unit changes: %s\n", strerror(-rc));
+        goto fin;
+    }
+
+    // Reloading-Event wie gehabt
     rc = sd_bus_match_signal(st->bus,
                              NULL,
                              SD_DESTINATION,

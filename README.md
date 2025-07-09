@@ -42,7 +42,7 @@ After launching ServiceMaster, you can use the following controls:
 - `-w:` Do not show the welcome message
 - `-h:` Display help / usage message and exit
 - `-c:` Set the colorscheme.
-        Names with a space must be enclosed in quotes!
+  Names with a space must be enclosed in quotes!
 - `-l:` List all available colorschemes
 - `-p:` Print configuration file (with colorschemes)
 - `-e:` Edit the configuration file
@@ -63,7 +63,7 @@ Lennart Martens
 
 ## Version
 
-1.7.6 (2025)
+1.7.7 (2025)
 
 ## Building & Install
 
