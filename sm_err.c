@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -27,7 +28,8 @@ static void sm_err_setv(const char *fmt, va_list *ap)
     errbuf = NULL;
 
     rc = vasprintf(&errbuf, fmt, *ap);
-    if (rc < 0) {
+    if (rc < 0)
+    {
         sm_err_print_err("Cannot allocate memory attempting to set an error!");
         exit(EXIT_FAILURE);
     }
@@ -47,7 +49,6 @@ void sm_err_window(const char *fmt, ...)
     return;
 }
 
-
 void sm_err_set(const char *fmt, ...)
 {
     va_list ap = {0};
@@ -60,7 +61,7 @@ void sm_err_set(const char *fmt, ...)
     exit(1);
 }
 
-const char * sm_err_get(void)
+const char *sm_err_get(void)
 {
     return errbuf;
 }
