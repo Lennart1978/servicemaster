@@ -35,6 +35,7 @@ static int position = 0;
 static uid_t euid = INT32_MAX;
 static sd_event *event = NULL;
 static sd_event_source *event_source = NULL;
+static bool fallback_mode = false; // Track if we're in fallback color mode
 
 // Enum for header highlighting
 typedef enum
@@ -232,14 +233,48 @@ static short rgb_to_ncurses(short value)
     return (short)((value * 1000) / 255);
 }
 
+/**
+ * Applies a fallback color scheme using standard ncurses colors
+ * when true color support is not available.
+ */
+static void apply_fallback_color_scheme(void)
+{
+    // Use standard ncurses colors - no custom color initialization needed
+    // The color pairs defined in init_color_pairs() will use the default colors
+    // This provides a basic but functional color scheme
+}
+
+/**
+ * Applies the specified color scheme to the terminal.
+ * If true color support is not available, falls back to standard colors
+ * and displays a notification to the user.
+ *
+ * @param scheme The color scheme to apply
+ */
 static void apply_color_scheme(const ColorScheme *scheme)
 {
     if (!can_change_color())
     {
-        endwin();
-        printf("Your terminal does not support custom colors.\n");
-        exit(EXIT_FAILURE);
+        // Apply fallback color scheme using standard ncurses colors
+        apply_fallback_color_scheme();
+        fallback_mode = true; // Set fallback mode
+        
+        // Display notification to user about fallback mode
+        mvprintw(0, 0, "Note: Terminal does not support custom colors. Using fallback color scheme.");
+        refresh();
+        
+        // Wait a moment for user to see the message
+        napms(2000);
+        
+        // Clear the notification
+        move(0, 0);
+        clrtoeol();
+        refresh();
+        
+        return;
     }
+    
+    fallback_mode = false; // Reset fallback mode when using custom colors
 
     // Apply the custom color scheme
     init_color(COLOR_BLACK,
@@ -467,12 +502,20 @@ static void display_text_and_lines(Bus *bus)
     getmaxyx(stdscr, maxy, maxx);
 
     // Solarized light theme needs a different color pair
-    !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    if (fallback_mode) {
+        attron(COLOR_PAIR(BLACK_WHITE));
+    } else {
+        !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    }
 
     border(0, 0, 0, 0, 0, 0, 0, 0);
 
-    // Create the navigation text with the current theme name
-    snprintf(navigation, sizeof(navigation), D_NAVIGATION_BASE, color_schemes[colorscheme].name);
+    // Create the navigation text with the current theme name or "Fallback"
+    if (fallback_mode) {
+        snprintf(navigation, sizeof(navigation), D_NAVIGATION_BASE, "Fallback");
+    } else {
+        snprintf(navigation, sizeof(navigation), D_NAVIGATION_BASE, color_schemes[colorscheme].name);
+    }
 
     attron(A_BOLD);
     mvaddstr(1, 1, D_HEADLINE);
@@ -496,7 +539,11 @@ static void display_text_and_lines(Bus *bus)
     attroff(A_BOLD);
 
     // Solarized light theme needs a different color pair
-    !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    if (fallback_mode) {
+        attron(COLOR_PAIR(BLACK_WHITE));
+    } else {
+        !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    }
     mvprintw(headerrow, D_XLOAD - 10, "Pos.:%3d", position + index_start);
 
     // UNIT Header
@@ -516,7 +563,11 @@ static void display_text_and_lines(Bus *bus)
     attroff(COLOR_PAIR(GREEN_BLACK));
 
     // Solarized light theme needs a different color pair
-    !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    if (fallback_mode) {
+        attron(COLOR_PAIR(BLACK_WHITE));
+    } else {
+        !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? attron(COLOR_PAIR(MAGENTA_BLACK)) : attron(COLOR_PAIR(BLACK_WHITE));
+    }
 
     // STATE Header
     if (current_bold_header == BOLD_STATE)
@@ -1094,7 +1145,7 @@ int display_key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data
         break;
 
     case '+':
-        if (colorscheme < scheme_count - 1)
+        if (!fallback_mode && colorscheme < scheme_count - 1)
         {
             colorscheme++;
             apply_color_scheme(&color_schemes[colorscheme]);
@@ -1104,7 +1155,7 @@ int display_key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data
         break;
 
     case '-':
-        if (colorscheme > 0)
+        if (!fallback_mode && colorscheme > 0)
         {
             colorscheme--;
             apply_color_scheme(&color_schemes[colorscheme]);
@@ -1534,6 +1585,8 @@ void display_status_window(const char *status, const char *title)
 
     if (rows == 0)
         wattron(win, COLOR_PAIR(RED_BLACK));
+    else if (fallback_mode)
+        wattron(win, COLOR_PAIR(BLACK_WHITE));
     else
         !strcmp(color_schemes[colorscheme].name, "Solarized Light") ? wattron(win, COLOR_PAIR(MAGENTA_BLACK)) : wattron(win, COLOR_PAIR(BLACK_WHITE));
 
@@ -1605,7 +1658,7 @@ void d_op(Bus *bus, Service *svc, enum operation mode, const char *txt)
             if (system("reset") != 0)
                 perror("system reset failed");
 
-            char *args[] = {"sudo", program_name, "-w", "-c", color_schemes[colorscheme].name, NULL};
+            char *args[] = {"sudo", program_name, "-w", "-c", fallback_mode ? "Fallback" : color_schemes[colorscheme].name, NULL};
 
             if (execvp("sudo", args) != 0)
             {

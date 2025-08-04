@@ -1,4 +1,4 @@
-# ServiceMaster 1.7.7
+# ServiceMaster 1.7.8
 
 ServiceMaster is a powerful terminal-based tool for managing Systemd units on Linux systems. It provides an intuitive interface for viewing and controlling system and user units, making it easier to manage your units without leaving the command line.
 
@@ -63,7 +63,7 @@ Lennart Martens
 
 ## Version
 
-1.7.7 (2025)
+1.7.8 (2025)
 
 ## Building & Install
 
@@ -122,10 +122,6 @@ sudo rm /usr/local/bin/servicemaster && sudo rm /usr/local/share/man/man1/servic
 ```
 
 ### For Archlinux users: There is 'servicemaster-git' (recommended) and 'servicemaster-bin' in the AUR
-
-### I recommend installing the -git version ! It is in most cases much more bugfree / stable and uptodate than the -bin version
-
-(I'm not the maintainer of the -bin version)
 
 ## The configuration
 
