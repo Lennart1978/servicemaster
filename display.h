@@ -15,7 +15,7 @@
 #define KEY_VI_D 106
 
 #define D_ESCOFF_MS 300000LLU
-#define D_VERSION "1.7.8"
+#define D_VERSION "1.7.9"
 #define D_FUNCTIONS "F1:START F2:STOP F3:RESTART F4:ENABLE F5:DISABLE F6:MASK F7:UNMASK F8:RELOAD"
 #define D_SERVICE_TYPES "a:ALL d:DEV i:SLICE s:SERVICE o:SOCKET t:TARGET r:TIMER m:MOUNT c:SCOPE n:AMOUNT w:SWAP p:PATH H:SSHOT"
 #define D_HEADLINE ""
@@ -68,6 +68,7 @@ void display_redraw(Bus *bus);
 void display_redraw_row(Service *svc);
 void display_set_bus_type(enum bus_type);
 void display_status_window(const char *status, const char *title);
+void display_help_overlay(void);
 void d_op(Bus *bus, Service *svc, enum operation mode, const char *txt);
 void set_color_scheme(int scheme);
 void reset_terminal_title(void);

@@ -18,7 +18,7 @@ bool load_actual = true;
 extern void reset_terminal_title(void);
 
 // Help message
-const char *help = "\nUsage: servicemaster [options]\n\n"
+const char *help = "\nUsage: servicemaster [options]\n\n"                   
                    "Options:\n"
                    "  -v  Display the version information and exit\n"
                    "  -w  Do not show the welcome message\n"
@@ -38,6 +38,7 @@ const char *help = "\nUsage: servicemaster [options]\n\n"
                    "- +,-: Switch between colorschemes.\n"
                    "- f: Search for units by name.\n"
                    "- Tab: Select column to sort, Return: Sort.\n\n"
+                   "Press F12 or ? for help\n"
                    "                2025 Lennart Martens\n\n"
                    "Configuration and colorschemes are stored in:\n" CONFIG_FILE "\n\n"
                    "License: MIT Version: " D_VERSION "\n"
@@ -52,6 +53,7 @@ static void show_welcome_message()
     const char *welcome_text =
         "Welcome to ServiceMaster!\n\n"
         "This tool allows you to manage Systemd units through an intuitive interface.\n\n"
+        "Press F12 or ? for help\n\n"
         "SECURITY GUIDELINE:\n"
         "- Only root can manage system services.\n"
         "- Regular users can only manage their own user services.\n\n"

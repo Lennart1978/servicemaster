@@ -1,7 +1,7 @@
 project(
     'ServiceMaster',
     'c',
-    version: '1.7.8',
+    version: '1.7.9',
     default_options: ['warning_level=3', 'buildtype=release', 'strip=true', 'c_std=c99'],
 )
 

@@ -849,6 +849,14 @@ int display_key_pressed(sd_event_source *s, int fd, uint32_t revents, void *data
         start_time = service_now();
         return 0;
     }
+    case KEY_F(12):
+    case '?':
+        // Display interactive help overlay
+        display_help_overlay();
+        clear();
+        display_redraw(bus);
+        refresh();
+        break;
     case KEY_ESC:
         // If a header is highlighted, remove highlighting without sorting
         if (current_bold_header != BOLD_NONE)
@@ -1553,22 +1561,53 @@ void display_status_window(const char *status, const char *title)
 
     getmaxyx(stdscr, maxy, maxx);
 
-    if (rows >= maxy)
-        height = maxy + 2;
+    // Calculate height - ensure it doesn't exceed available screen space
+    if (rows >= maxy - 2)
+        height = maxy - 2;  // Leave space for borders and prevent overflow
     else
-        height = rows + 2;
+        height = rows + 2;  // +2 for top and bottom border
     if (rows == 0)
         height = 3;
 
-    if (maxx_row >= maxx)
-        width = maxx;
+    // Ensure minimum height
+    if (height < 3)
+        height = 3;
+
+    // Calculate width - ensure it doesn't exceed available screen space
+    if (maxx_row >= maxx - 4)
+        width = maxx - 2;  // Leave space for borders
     else
         width = maxx_row + 4;
+
+    // Ensure minimum width
+    if (width < 20)
+        width = 20;
 
     starty = (maxy - height) / 2;
     startx = (maxx - width) / 2;
 
+    // Ensure window position is valid
+    if (starty < 0)
+        starty = 0;
+    if (startx < 0)
+        startx = 0;
+
     win = newwin(height, width, starty, startx);
+    
+    // Check if window creation was successful
+    if (win == NULL)
+    {
+        // Fallback: try creating a smaller window
+        height = maxy - 2;
+        width = maxx - 2;
+        starty = 1;
+        startx = 1;
+        win = newwin(height, width, starty, startx);
+        
+        if (win == NULL)
+            return;  // Cannot create window, abort
+    }
+    
     box(win, 0, 0);
     keypad(win, TRUE);
     start_color();
@@ -1595,13 +1634,17 @@ void display_status_window(const char *status, const char *title)
     {
         line_length = line_end - line_start;
         if (line_length > width - 2)
-            line_length = width - 6;
+            line_length = width - 2;
 
-        mvwaddnstr(win, y++, x, line_start, line_length);
+        // Only add line if we have space in the window
+        if (y < height - 1)
+            mvwaddnstr(win, y++, x, line_start, line_length);
         line_start = line_end + 1;
     }
 
-    mvwprintw(win, y, x, "%s", line_start);
+    // Add last line if there's space
+    if (y < height - 1)
+        mvwprintw(win, y, x, "%s", line_start);
     wrefresh(win);
     wgetch(win);
 
@@ -1611,6 +1654,68 @@ void display_status_window(const char *status, const char *title)
     delwin(win);
     refresh();
 }
+
+/**
+ * Displays an interactive help overlay with all keyboard shortcuts.
+ *
+ * This function shows a comprehensive help screen organized by categories:
+ * navigation, service operations, filters, sorting, and display options.
+ * The help is displayed until the user presses any key.
+ */
+void display_help_overlay(void)
+{
+    const char *help_text =
+        "=== NAVIGATION ===\n"
+        "Arrow Keys / h,j,k,l  Navigate through services\n"
+        "Page Up / Page Down   Scroll one page up/down\n"
+        "Space                 Toggle between System and User units\n"
+        "\n"
+        "=== SERVICE OPERATIONS ===\n"
+        "F1                    Start selected service\n"
+        "F2                    Stop selected service\n"
+        "F3                    Restart selected service\n"
+        "F4                    Enable selected service\n"
+        "F5                    Disable selected service\n"
+        "F6                    Mask selected service\n"
+        "F7                    Unmask selected service\n"
+        "F8                    Reload selected service\n"
+        "Enter                 Show detailed status of selected service\n"
+        "\n"
+        "=== QUICK FILTERS (Service Types) ===\n"
+        "a                     Show ALL units\n"
+        "d                     Show DEVICE units\n"
+        "i                     Show SLICE units\n"
+        "s                     Show SERVICE units\n"
+        "o                     Show SOCKET units\n"
+        "t                     Show TARGET units\n"
+        "r                     Show TIMER units\n"
+        "m                     Show MOUNT units\n"
+        "c                     Show SCOPE units\n"
+        "n                     Show AUTOMOUNT units\n"
+        "w                     Show SWAP units\n"
+        "p                     Show PATH units\n"
+        "H                     Show SNAPSHOT units\n"
+        "Left / Right          Navigate between service types\n"
+        "\n"
+        "=== SORTING & SEARCH ===\n"
+        "Tab                   Select column to sort by\n"
+        "Return (with column)  Sort by selected column\n"
+        "f                     Search for units by name\n"
+        "ESC (in sort mode)    Cancel column selection\n"
+        "\n"
+        "=== DISPLAY OPTIONS ===\n"
+        "+                     Next color scheme\n"
+        "-                     Previous color scheme\n"
+        "\n"
+        "=== EXIT ===\n"
+        "q / ESC               Quit ServiceMaster\n"
+        "? / F12               Show this help\n"
+        "\n"
+        "Press any key to return to the main view...";
+
+    display_status_window(help_text, "ServiceMaster " D_VERSION " - Keyboard Shortcuts");
+}
+
 
 void d_op(Bus *bus, Service *svc, enum operation mode, const char *txt)
 {
