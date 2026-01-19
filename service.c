@@ -399,7 +399,7 @@ void service_insert(Bus *bus, Service *svc)
     /* Find the next entry lexicographically above us and insert */
     TAILQ_FOREACH(node, &bus->services, e)
     {
-        if (strcmp(node->object, svc->object) <= 0)
+        if (strcasecmp(node->unit, svc->unit) <= 0)
             continue;
 
         TAILQ_INSERT_BEFORE(node, svc, e);

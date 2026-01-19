@@ -134,7 +134,7 @@ static int compare_services(const void *a, const void *b)
     switch (current_bold_header)
     {
     case BOLD_UNIT:
-        result = strcmp(svc1->unit, svc2->unit);
+        result = strcasecmp(svc1->unit, svc2->unit);
         return unit_sort_direction == SORT_ASCENDING ? result : -result;
 
     case BOLD_STATE:

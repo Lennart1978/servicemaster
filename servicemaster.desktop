@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Version=1.7.9
+Version=1.8.0
 Name=ServiceMaster
 GenericName=Systemd Manager
 Comment=Manage Systemd services
